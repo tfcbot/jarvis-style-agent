@@ -13,7 +13,7 @@ flowchart TB
     UI <--> BFF
   end
 
-  subgraph BE["BACKEND  (brain/ — the EVE agent, the buyer owns it)"]
+  subgraph BE["BACKEND  (brain/ — the EVE agent, the user owns it)"]
     SHIM["OpenAI-compatible shim<br/>POST /v1/chat/completions (bearer-guarded)"]
     LOOP["Agent loop: model + tools"]
     SHIM --> LOOP
@@ -42,14 +42,14 @@ flowchart TB
 ```
 
 The dashed Memory layer is optional: the foundation ("hello" works) needs only Frontend, Backend, and
-the per-turn Context. Memory is added when the buyer wants it.
+the per-turn Context. Memory is added when the user wants it.
 
 ## The pattern: Backend-for-Frontend (BFF)
 
 The single rule that makes the rest fall into place:
 
 > The frontend never talks to a model or a third-party service directly. It talks to **one backend the
-> buyer owns**, and that backend talks to everything else.
+> user owns**, and that backend talks to everything else.
 
 Why it matters here:
 
