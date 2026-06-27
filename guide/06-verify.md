@@ -32,7 +32,8 @@ Backend:
 
 Wiring:
 
-- [ ] The orb's `BRAIN_URL` is the brain's prod URL and `BRAIN_SECRET == OPENAI_SHIM_SECRET`.
+- [ ] The orb's `BRAIN_URL` is the brain's prod URL, and `BRAIN_SECRET` is set to the same value on
+      both the orb and the brain.
 - [ ] `BRAIN_MODE=sidecar` on the orb (not `mock`), so it is hitting the real brain.
 
 Security (the BFF promise):
@@ -46,9 +47,9 @@ Security (the BFF promise):
 - **Orb renders but no voice in:** `/api/transcribe` needs `AI_GATEWAY_API_KEY` on the orb project.
   Check the Network tab for a 502 from `/api/transcribe`.
 - **Transcribes but no reply:** the orb cannot reach the brain. Check `BRAIN_URL` (the brain's prod
-  URL, no trailing slash issues) and that `BRAIN_SECRET == OPENAI_SHIM_SECRET`. A `brain_auth_failed`
-  in the reply box means the secrets differ; `brain_unreachable` means the URL is wrong or the brain
-  is not deployed.
+  URL, no trailing slash issues) and that `BRAIN_SECRET` is identical on the orb and the brain. A
+  `brain_auth_failed` in the reply box means the two values differ; `brain_unreachable` means the URL
+  is wrong or the brain is not deployed.
 - **Reply text but no audio out:** `/api/speak` needs `AI_GATEWAY_API_KEY` too; or the browser tab
   has not had a user gesture yet (the mic tap counts, so this is rare).
 - **Brain build failed:** almost always a dashed model id, or `brain` got excluded by a root

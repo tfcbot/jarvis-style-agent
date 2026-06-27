@@ -138,7 +138,7 @@ Your replies are heard, not read. So:
 
 `brain/agent/channels/openai-compat.ts` — **PIN — write verbatim.** This is the most important file in
 the backend and the easiest to get subtly wrong. It exposes `POST /v1/chat/completions`, guards it
-with a bearer (`OPENAI_SHIM_SECRET`), runs the full EVE agent loop, and translates EVE's event stream
+with a bearer (`BRAIN_SECRET`), runs the full EVE agent loop, and translates EVE's event stream
 into OpenAI SSE. Reproduce it exactly.
 
 Two non-obvious things it gets right, do not "simplify" them away:
@@ -167,7 +167,7 @@ type StreamEvent =
 // streaming text only. Tool calls resolve entirely inside Eve and are never
 // surfaced as OpenAI `tool_calls`; the caller just hears the natural-language result.
 //
-// Auth: `Authorization: Bearer <OPENAI_SHIM_SECRET>`.
+// Auth: `Authorization: Bearer <BRAIN_SECRET>`.
 
 type ChatMessage = { role?: string; content?: unknown };
 type ChatCompletionsBody = {
@@ -231,9 +231,9 @@ function isTerminalEvent(event: StreamEvent): boolean {
 export default defineChannel({
   routes: [
     POST("/v1/chat/completions", async (req, { send }) => {
-      const secret = process.env.OPENAI_SHIM_SECRET;
+      const secret = process.env.BRAIN_SECRET;
       if (!secret) {
-        return new Response("OPENAI_SHIM_SECRET not configured", { status: 500 });
+        return new Response("BRAIN_SECRET not configured", { status: 500 });
       }
       const token = extractBearerToken(req.headers.get("authorization"));
       if (token !== secret) {
@@ -361,7 +361,7 @@ AI_GATEWAY_API_KEY=
 
 # Shared bearer the shim validates. MUST equal BRAIN_SECRET in the orb's .env.local.
 # Generate any long random string, e.g.  openssl rand -hex 32
-OPENAI_SHIM_SECRET=
+BRAIN_SECRET=
 
 # Model the agent runs (routed via the gateway). Use a valid *dotted* gateway id.
 # anthropic/claude-haiku-4.5 is fast (good for voice). Dashes will NOT work.
@@ -381,10 +381,10 @@ node_modules
 dist
 ```
 
-The person provides `AI_GATEWAY_API_KEY` (same gateway as the orb's voice) and picks
-`OPENAI_SHIM_SECRET`. Whatever they pick for the secret here **must be the orb's `BRAIN_SECRET`** in
-`orb/.env.local`. That shared bearer is the only thing standing between the public internet and the
-brain, so make it long and random.
+The person provides `AI_GATEWAY_API_KEY` (same gateway as the orb's voice) and picks a value for
+`BRAIN_SECRET`. **`BRAIN_SECRET` is one shared bearer used on both sides** — the exact same value goes
+in the brain's `.env` (here) and in the orb's `orb/.env.local`. It is the only thing standing between
+the public internet and the brain, so make it long and random (e.g. `openssl rand -hex 32`).
 
 ## Run + verify locally
 
@@ -400,17 +400,17 @@ AGENT_MODEL="anthropic/claude-haiku-4.5" npm run build
 PORT=8787 npm run dev
 ```
 
-Smoke-test the door directly with curl (replace the secret with your `OPENAI_SHIM_SECRET`):
+Smoke-test the door directly with curl (replace the secret with your `BRAIN_SECRET`):
 
 ```bash
 curl -N http://127.0.0.1:8787/v1/chat/completions \
-  -H "authorization: Bearer $OPENAI_SHIM_SECRET" \
+  -H "authorization: Bearer $BRAIN_SECRET" \
   -H "content-type: application/json" \
   -d '{"stream":true,"messages":[{"role":"user","content":"hello"}]}'
 ```
 
 You should see `data:` SSE frames stream a greeting, ending with `data: [DONE]`. A `401` means the
-bearer does not match; a `500` mentioning `OPENAI_SHIM_SECRET` means it is not set.
+bearer does not match; a `500` mentioning `BRAIN_SECRET` means it is not set.
 
 ## Connect the orb to the real brain
 
@@ -419,7 +419,7 @@ Back in `orb/.env.local`, flip off the mock and point at the brain:
 ```bash
 BRAIN_MODE=sidecar
 BRAIN_URL=http://127.0.0.1:8787
-BRAIN_SECRET=        # = the brain's OPENAI_SHIM_SECRET
+BRAIN_SECRET=        # the SAME value you set in brain/.env
 ```
 
 Run both (brain on 8787, orb on 3000), open the orb, tap the mic, say "hello." You should hear a

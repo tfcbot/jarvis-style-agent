@@ -14,8 +14,8 @@ No laptop required after this.
   identically deployed. No code changes to ship.
 - **Re-set env on each Vercel project.** A missing env var is the number-one "worked locally, broke in
   prod" cause.
-- **Rewire the two URLs.** The orb's `BRAIN_URL` points at the deployed brain; `BRAIN_SECRET` stays
-  equal to the brain's `OPENAI_SHIM_SECRET`. The orb proxies server-side, so **there is no CORS**.
+- **Rewire the URL, keep the secret.** The orb's `BRAIN_URL` points at the deployed brain;
+  `BRAIN_SECRET` is the same value on both projects. The orb proxies server-side, so **there is no CORS**.
 
 ## One repo, two projects
 
@@ -41,7 +41,7 @@ vercel git connect <repo-url>          # connect the GitHub repo for deploy-on-m
 #   Production Branch = main
 #   Node.js Version   = 24.x
 vercel env add AI_GATEWAY_API_KEY      # the gateway credential that runs the model
-vercel env add OPENAI_SHIM_SECRET      # the shared bearer (long random string)
+vercel env add BRAIN_SECRET      # the shared bearer (long random string)
 vercel env add AGENT_MODEL             # a DOTTED gateway id, e.g. anthropic/claude-haiku-4.5
 # If you added memory (04-memory.md):
 # vercel env add COGNEE_API_KEY
@@ -68,7 +68,7 @@ vercel link --project jarvis-orb
 vercel git connect <repo-url>   # deploy-on-merge (or `vercel deploy --prod` to ship now)
 vercel env add AI_GATEWAY_API_KEY   # runs the voice (TTS + STT)
 vercel env add BRAIN_URL            # = the deployed brain's URL
-vercel env add BRAIN_SECRET         # = the brain's OPENAI_SHIM_SECRET
+vercel env add BRAIN_SECRET         # the SAME value you set on the brain
 vercel env add BRAIN_MODE           # set to: sidecar
 # Optional voice overrides: VOICE_TIER, VOICE, ELEVENLABS_KEY, TTS_MODEL, STT_MODEL.
 ```
@@ -78,11 +78,12 @@ vercel env add BRAIN_MODE           # set to: sidecar
 
 ## The env that must match
 
-Two values are shared and must be identical, or the orb cannot reach the brain:
+One value is shared and must be identical on both projects, or the orb cannot reach the brain. The
+brain validates the bearer; the orb sends it. Same name, same value:
 
 ```
-brain:  OPENAI_SHIM_SECRET  ==  orb:  BRAIN_SECRET
-brain:  (its prod URL)      ->   orb:  BRAIN_URL
+BRAIN_SECRET            same value on the brain AND the orb (the shared bearer)
+brain's prod URL   ->   orb's BRAIN_URL
 ```
 
 And the model id, in both the brain env and any local override, must be a **dotted** gateway id.

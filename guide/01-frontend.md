@@ -1156,7 +1156,7 @@ credential for voice; everything else has a working default.
 # Set BRAIN_MODE=mock to run the whole UI with NO backend (canned replies).
 BRAIN_MODE=sidecar
 BRAIN_URL=http://127.0.0.1:8787
-# Must equal OPENAI_SHIM_SECRET in the brain (you set this in 02-backend.md).
+# Must equal BRAIN_SECRET in the brain (you set this in 02-backend.md).
 BRAIN_SECRET=
 
 # Vercel AI Gateway credential — runs the voice (TTS + STT). Required.

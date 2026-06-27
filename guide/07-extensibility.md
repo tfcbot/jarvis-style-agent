@@ -90,7 +90,7 @@ const app = new Hono();
 
 app.post("/v1/chat/completions", async (c) => {
   const auth = c.req.header("authorization");
-  if (auth !== `Bearer ${process.env.OPENAI_SHIM_SECRET}`) return c.json({ error: "unauthorized" }, 401);
+  if (auth !== `Bearer ${process.env.BRAIN_SECRET}`) return c.json({ error: "unauthorized" }, 401);
 
   const { messages } = await c.req.json();
   const result = streamText({ model: process.env.AGENT_MODEL ?? "anthropic/claude-haiku-4.5", messages });
