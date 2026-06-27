@@ -111,23 +111,28 @@ Two details that make the voice feel live, both pinned in `guide/01-frontend.md`
 ```mermaid
 flowchart LR
   Repo["One GitHub repo<br/>orb/ + brain/"]
+  Local["Developer machine<br/>orb on localhost (bun run dev)"]
 
   subgraph Vercel
-    OrbProj["Vercel project: ORB<br/>Next.js, root = repo root"]
     BrainProj["Vercel project: BRAIN<br/>Eve framework, root = brain/"]
   end
 
-  Repo -- "merge to main" --> OrbProj
+  GW["Vercel AI Gateway"]
+
   Repo -- "merge to main" --> BrainProj
-  OrbProj -- "BRAIN_URL + BRAIN_SECRET" --> BrainProj
-  OrbProj -- "voice (keyless)" --> GW["Vercel AI Gateway"]
+  Repo -- "clone + run" --> Local
+  Local -- "BRAIN_URL + BRAIN_SECRET" --> BrainProj
+  Local -- "voice (keyless)" --> GW
   BrainProj -- "model (keyless)" --> GW
 ```
 
-- **Two Vercel projects off one repo.** The orb deploys from the repo root; the brain deploys with its
-  **Root Directory set to `brain/`** and Vercel's **Eve** framework preset. Both redeploy on merge to
-  `main`.
-- The orb reaches the brain by URL (`BRAIN_URL`) with a shared bearer (`BRAIN_SECRET`, set to the same
-  value on both). Because the orb proxies server-side, there is **no CORS** to deal with.
+- **One Vercel project off the repo.** The brain deploys with its **Root Directory set to `brain/`**
+  and Vercel's **Eve** framework preset. It redeploys on merge to `main`.
+- **The orb runs on localhost** (`bun run dev`) and reaches the brain by URL (`BRAIN_URL`) with a
+  shared bearer (`BRAIN_SECRET`, set to the same value on both). The orb proxies server-side, so there
+  is **no CORS** to deal with.
+- The brain is bearer-guarded and OpenAI-compatible, so it is safe to expose, and any agent reaches it
+  with `base_url + api_key`. The orb holds the gateway key and brain bearer in its server routes, so it
+  stays local rather than becoming a public endpoint.
 - One subdirectory gotcha (the brain lives in a subfolder of the orb's repo) is covered in
   `guide/05-deploy.md`. Get it wrong and the brain build fails; get it right and it is invisible.

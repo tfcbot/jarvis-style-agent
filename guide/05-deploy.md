@@ -1,31 +1,23 @@
-# 05 — Deploy: put it on Vercel, always on
+# 05 — Deploy: the brain on Vercel, the orb on localhost
 
-Take the orb and the brain from "works on localhost" to "deployed and always on." Both go to
-**Vercel**, as **two projects off the one repo**, each redeploying when the person merges to `main`.
-No laptop required after this.
+The brain is the only deployed surface. It runs on Vercel as one project, always on, reachable by its
+URL and guarded by a bearer. The orb runs on the user's machine with `bun run dev` and points at the
+deployed brain. The orb's server routes hold the secrets, so the orb stays local and never becomes a
+public endpoint.
 
-> Use the **Vercel CLI + git integration** (you run the commands; the person does one `vercel login`,
-> or sets `VERCEL_TOKEN` for fully headless). Do **not** use the Vercel SDK — that is for platforms
-> deploying on someone else's behalf. Here the person deploys to their own Vercel.
+> Use the **Vercel CLI + git integration** (you run the commands; the user does one `vercel login`,
+> or sets `VERCEL_TOKEN` for fully headless). Do **not** use the Vercel SDK. That is for platforms
+> deploying on someone else's behalf. Here the user deploys to their own Vercel.
 
-## What changes vs local
+## One repo, one deployed project
 
-- **Same code, same wiring.** The request/response shapes are stateless, so chat and voice behave
-  identically deployed. No code changes to ship.
-- **Re-set env on each Vercel project.** A missing env var is the number-one "worked locally, broke in
-  prod" cause.
-- **Rewire the URL, keep the secret.** The orb's `BRAIN_URL` points at the deployed brain;
-  `BRAIN_SECRET` is the same value on both projects. The orb proxies server-side, so **there is no CORS**.
+The repo holds both `orb/` (at the root) and `brain/` (a subfolder). Only the brain becomes a Vercel
+project.
 
-## One repo, two projects
-
-The repo holds both `orb/` (at the root) and `brain/` (a subfolder). Each becomes its own Vercel
-project:
-
-| Project | Framework (Vercel preset) | Root Directory | Redeploys on |
-| ------- | ------------------------- | -------------- | ------------ |
-| orb     | Next.js (auto-detected)   | repo root      | merge to `main` |
-| brain   | Eve (auto-detected)       | `brain`        | merge to `main` |
+| Surface | Runs on | Framework (Vercel preset) | Root Directory |
+| ------- | ------- | ------------------------- | -------------- |
+| brain   | Vercel, deploy-on-merge   | Eve (auto-detected)       | `brain` |
+| orb     | localhost (`bun run dev`) | Next.js                   | repo root |
 
 ## Brain → Vercel (deploy-on-merge)
 
@@ -41,64 +33,83 @@ vercel git connect <repo-url>          # connect the GitHub repo for deploy-on-m
 #   Production Branch = main
 #   Node.js Version   = 24.x
 vercel env add AI_GATEWAY_API_KEY      # the gateway credential that runs the model
-vercel env add BRAIN_SECRET      # the shared bearer (long random string)
+vercel env add BRAIN_SECRET            # the shared bearer (long random string)
 vercel env add AGENT_MODEL             # a DOTTED gateway id, e.g. anthropic/claude-haiku-4.5
 # If you added memory (04-memory.md):
 # vercel env add COGNEE_API_KEY
 ```
 
-After this, a merge to `main` builds and deploys the brain. Note its production URL; that is the orb's
+A merge to `main` builds and deploys the brain. Note its production URL; that is the orb's
 `BRAIN_URL`.
 
+> Set the env vars before the first deploy. `eve build` reads `AI_GATEWAY_API_KEY` to resolve the
+> model's gateway metadata, so a build with the key missing fails.
+
 > ### The subdirectory gotcha (read this)
-> The brain lives in a subfolder of the repo that also holds the orb. With the brain project's **Root
-> Directory = `brain`**, do **NOT** add `brain` to a repo-root `.vercelignore` — that would strip the
-> brain's own source and break `eve build` (`eve: command not found`, exit 127). Keep the orb's
-> exclusion of the brain in the orb's **`tsconfig.json`** instead (`"exclude": ["brain"]`, already set
-> in `01-frontend.md`). In short: `tsconfig` excludes the brain from the *orb build*; nothing in
-> `.vercelignore` touches `brain`.
+> The brain lives in a subfolder of the repo that also holds the orb. Set the brain project's **Root
+> Directory = `brain`**. Do **not** add `brain` to a repo-root `.vercelignore`; that strips the
+> brain's own source and breaks `eve build` (`eve: command not found`, exit 127). The orb's exclusion
+> of the brain lives in the orb's **`tsconfig.json`** (`"exclude": ["brain"]`, set in
+> `01-frontend.md`). `tsconfig` keeps the brain out of a local orb build; nothing in `.vercelignore`
+> touches `brain`.
 
-## Orb → Vercel
+## Orb → localhost
 
-Standard Next.js; the CLI detects it.
+The orb runs on the user's machine and talks to the deployed brain. Point it at the brain's
+production URL in `orb/.env.local`:
 
 ```bash
-cd <repo root>                  # the orb is the root app
-vercel link --project jarvis-orb
-vercel git connect <repo-url>   # deploy-on-merge (or `vercel deploy --prod` to ship now)
-vercel env add AI_GATEWAY_API_KEY   # runs the voice (TTS + STT)
-vercel env add BRAIN_URL            # = the deployed brain's URL
-vercel env add BRAIN_SECRET         # the SAME value you set on the brain
-vercel env add BRAIN_MODE           # set to: sidecar
-# Optional voice overrides: VOICE_TIER, VOICE, ELEVENLABS_KEY, TTS_MODEL, STT_MODEL.
+BRAIN_URL=https://<brain>.vercel.app   # the deployed brain
+BRAIN_MODE=remote
+BRAIN_SECRET=                          # the SAME value set on the brain
+AI_GATEWAY_API_KEY=                    # runs the voice (TTS + STT) from the local orb
 ```
 
-> Voice and inference bill to the person's Vercel team (the gateway runs both). Optionally put the orb
-> page behind a password while testing.
+Run it:
 
-## The env that must match
+```bash
+cd orb
+bun install
+bun run dev                            # http://localhost:3000
+```
 
-One value is shared and must be identical on both projects, or the orb cannot reach the brain. The
-brain validates the bearer; the orb sends it. Same name, same value:
+The browser calls only the orb's own `/api/*` routes; those hold the gateway key and the brain bearer
+server-side. No key reaches the page, and the brain answers only a request carrying the bearer.
+
+> Voice and inference bill to the user's Vercel team (the gateway runs both).
+
+## The values that must match
 
 ```
 BRAIN_SECRET            same value on the brain AND the orb (the shared bearer)
 brain's prod URL   ->   orb's BRAIN_URL
 ```
 
-And the model id, in both the brain env and any local override, must be a **dotted** gateway id.
-Dashes fail the build.
+`AGENT_MODEL` on the brain is a **dotted** gateway id (e.g. `anthropic/claude-haiku-4.5`). A dashed id
+fails the build.
+
+## Why the brain is the deployed surface and the orb is not
+
+The brain's only door is `POST /v1/chat/completions`, guarded by `BRAIN_SECRET`. The bearer is the
+lock and never leaves the server. The door speaks the OpenAI protocol, so any OpenAI-compatible client
+or agent drives it with `base_url + api_key`, where the api key is the bearer.
+
+The orb's `/api/*` routes hold the gateway key and the brain bearer and run with no auth in front of
+them. A publicly deployed orb is an open endpoint that spends the user's gateway credits for anyone
+with the link. On the Vercel Pro plan, Deployment Protection does not cover a project's production
+domain without the paid Advanced Deployment Protection add-on, so a deployed orb is not gated for
+free. Running the orb on localhost keeps the secrets local and removes the public surface. Deploy the
+brain; run the orb.
 
 ## Ship it
 
 1. Commit the repo (orb + brain), push, open a PR, merge to `main`.
-2. Both Vercel projects build and deploy on the merge.
-3. Set `BRAIN_URL` on the orb to the brain's now-known prod URL (re-deploy the orb if you set it after
-   the first build).
-4. Open the orb's URL. Go to `06-verify.md`.
+2. The brain project builds and deploys on the merge.
+3. Set `BRAIN_URL` in `orb/.env.local` to the brain's prod URL.
+4. Run the orb with `bun run dev` and go to `06-verify.md`.
 
-> The person does the `vercel login` (or provides `VERCEL_TOKEN`) and pastes the keys. You can run
-> every other command. The brain's token/model calls and the orb's voice calls all bill to their
-> Vercel account, by design — it is their system.
+> The user does the `vercel login` (or provides `VERCEL_TOKEN`) and pastes the keys. You run every
+> other command. Production deploys happen on merge to `main`; an org policy may block a manual
+> `vercel deploy --prod`, so rely on the git connection.
 
 Next: `06-verify.md`.

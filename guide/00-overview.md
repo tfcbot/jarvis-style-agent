@@ -73,16 +73,18 @@ Same idea at two scales. Learn it here and you will see it everywhere.
 | Context  | the minimum (instructions + transcript per turn, which the backend already does) | `03-context.md` to go deeper |
 | Memory   | no                  | `04-memory.md` later |
 
-So: build the **Frontend** and the **Backend**, **deploy** them (`05-deploy.md`), and **verify**
-"hello" works (`06-verify.md`). That is the foundation. Context and Memory deepen it afterward.
+So: build the **Frontend** and the **Backend**, **deploy** the brain (`05-deploy.md`), run the orb
+locally, and **verify** "hello" works (`06-verify.md`). That is the foundation. Context and Memory
+deepen it afterward.
 
 ## The build, start to finish
 
 1. **Frontend** (`01-frontend.md`) — scaffold the Next.js orb, write the three BFF routes, the voice
-   loop, and the orb render. Run it against a mock brain so it works before the real one exists.
+   loop, and the orb render.
 2. **Backend** (`02-backend.md`) — scaffold the EVE brain, write its instructions and the
    OpenAI-compatible shim, run it locally, and point the orb at it. Now "hello" works on localhost.
-3. **Deploy** (`05-deploy.md`) — two Vercel projects off one repo, env vars set, deploy-on-merge.
+3. **Deploy** (`05-deploy.md`) — deploy the brain to Vercel (one project, deploy-on-merge); point the
+   local orb at the deployed brain.
 4. **Verify** (`06-verify.md`) — the acceptance checklist. When it passes, **stop**. The foundation is
    done. Tell the person, and ask what they want to build on top.
 
