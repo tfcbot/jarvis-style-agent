@@ -16,9 +16,8 @@ else.
 - The **Vercel AI SDK** (`ai`) with **`@ai-sdk/gateway`** for keyless voice (TTS + STT), and
   **`@ai-sdk/elevenlabs`** for the optional premium voice.
 
-Build the orb against a **mock brain** first (included below). It streams a canned reply with no
-backend, so you can get the whole frontend working before `02-backend.md` exists. Then flip one env
-var to point at the real brain.
+The orb talks to the brain over the brain's OpenAI-compatible shim. Build the brain in `02-backend.md`,
+then point the orb at it with `BRAIN_URL`. The orb runs locally; only the brain deploys.
 
 ## File tree
 
@@ -47,7 +46,6 @@ orb/
     openai-sse.ts                 # parse OpenAI SSE into content deltas               (PIN)
     ports/brain.ts                # the Brain interface                                (PIN)
     adapters/http-brain.ts        # real brain over the OpenAI-compatible shim         (PIN)
-    adapters/mock-brain.ts        # offline canned brain (build/dev without a backend) (PIN)
     adapters/brain-select.ts      # pick the brain from env                            (PIN)
     voice/tts.ts                  # pick TTS model + voice by tier                     (PIN)
 ```
@@ -61,6 +59,7 @@ orb/
   "name": "orb",
   "private": true,
   "type": "module",
+  "packageManager": "bun@1.3.10",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
@@ -148,7 +147,7 @@ export type ChatDelta =
 ## The BFF: the brain port + adapters
 
 The orb does not call the brain directly from a route; it calls a small **`Brain` port** and an env
-switch picks the adapter (the real HTTP brain, or the offline mock). This is the BFF pattern in
+switch picks the adapter (the HTTP brain). This is the BFF pattern in
 miniature: the route depends on an interface, not a provider.
 
 `lib/ports/brain.ts` — **PIN:**
@@ -159,7 +158,7 @@ miniature: the route depends on an interface, not a provider.
 import type { ChatMessage, ChatDelta } from '@/lib/domain/chat';
 
 export interface Brain {
-  readonly mode: 'sidecar' | 'remote' | 'mock';
+  readonly mode: 'sidecar' | 'remote';
   chat(messages: ChatMessage[], signal: AbortSignal): AsyncIterable<ChatDelta>;
 }
 ```
@@ -255,64 +254,23 @@ export function httpBrain(opts: HttpBrainOpts): Brain {
 }
 ```
 
-`lib/adapters/mock-brain.ts` — **PIN** (offline: lets the whole frontend run with no backend):
+`lib/adapters/brain-select.ts` — **PIN** (env switch; always the real HTTP brain):
 
 ```ts
-// Adapter: a keyless mock brain. Streams a canned reply word-by-word so the
-// chat loop and orb can be exercised with no EVE backend (build/dev/offline).
-
-import type { Brain } from '@/lib/ports/brain';
-import type { ChatMessage, ChatDelta } from '@/lib/domain/chat';
-
-const REPLY =
-  'Hello. I am online and listening. Everything looks nominal. ' +
-  'Ask me anything, or tell me what you would like to build.';
-
-function delay(ms: number, signal: AbortSignal): Promise<void> {
-  return new Promise((resolve) => {
-    const id = setTimeout(resolve, ms);
-    signal.addEventListener('abort', () => { clearTimeout(id); resolve(); }, { once: true });
-  });
-}
-
-export function mockBrain(): Brain {
-  return {
-    mode: 'mock',
-    async *chat(_messages: ChatMessage[], signal: AbortSignal): AsyncIterable<ChatDelta> {
-      await delay(280, signal);
-      const words = REPLY.split(' ');
-      for (let i = 0; i < words.length; i++) {
-        if (signal.aborted) break;
-        yield { type: 'delta', text: i === 0 ? words[i] : ` ${words[i]}` };
-        await delay(45, signal);
-      }
-      yield { type: 'done' };
-    },
-  };
-}
-```
-
-`lib/adapters/brain-select.ts` — **PIN** (env switch; default is the real sidecar/remote brain, fall
-back to the mock when no URL is configured or `BRAIN_MODE=mock`):
-
-```ts
-// Select the brain adapter from env. Default `sidecar` (HTTP brain against a
-// local EVE shim). Falls back to the mock when no URL, or BRAIN_MODE=mock.
+// Select the brain adapter from env. The orb runs locally and talks to the
+// deployed EVE brain over its OpenAI-compatible shim.
+//
+//   BRAIN_MODE=remote   -> the deployed brain (default; BRAIN_URL = its Vercel URL)
+//   BRAIN_MODE=sidecar  -> a brain you run locally (BRAIN_URL = http://127.0.0.1:8787)
 
 import type { Brain } from '@/lib/ports/brain';
 import { httpBrain } from '@/lib/adapters/http-brain';
-import { mockBrain } from '@/lib/adapters/mock-brain';
 
 export function selectBrain(): Brain {
-  const mode = (process.env.BRAIN_MODE ?? 'sidecar').toLowerCase();
-  const url = process.env.BRAIN_URL ?? 'http://localhost:8787';
-  const secret = process.env.BRAIN_SECRET ?? '';
-  const model = process.env.AGENT_MODEL;
-
-  if (mode === 'sidecar' || mode === 'remote') {
-    if (url) return httpBrain({ mode, url, secret, model });
-  }
-  return mockBrain();
+  const url = process.env.BRAIN_URL;
+  if (!url) throw new Error('BRAIN_URL is not set. Point it at the deployed brain (or a local one).');
+  const mode = (process.env.BRAIN_MODE ?? 'remote').toLowerCase() === 'sidecar' ? 'sidecar' : 'remote';
+  return httpBrain({ mode, url, secret: process.env.BRAIN_SECRET ?? '', model: process.env.AGENT_MODEL });
 }
 ```
 
@@ -1148,19 +1106,18 @@ html, body { margin: 0; height: 100%; background: #02030a; color: #cfe6ff;
 
 ## Environment
 
-Create `orb/.env.local` (never committed). For the foundation, the only required value is the gateway
-credential for voice; everything else has a working default.
+Create `orb/.env.local` (never committed). The orb runs locally and points at the brain over
+`BRAIN_URL`.
 
 ```bash
-# Brain selection. Default 'sidecar' talks to a local brain at BRAIN_URL.
-# Set BRAIN_MODE=mock to run the whole UI with NO backend (canned replies).
-BRAIN_MODE=sidecar
-BRAIN_URL=http://127.0.0.1:8787
+# The brain's address. Prod: the deployed brain's Vercel URL.
+# For a brain running locally, set BRAIN_MODE=sidecar and BRAIN_URL=http://127.0.0.1:8787
+BRAIN_URL=https://<brain>.vercel.app
+BRAIN_MODE=remote
 # Must equal BRAIN_SECRET in the brain (you set this in 02-backend.md).
 BRAIN_SECRET=
 
-# Vercel AI Gateway credential — runs the voice (TTS + STT). Required.
-# (Or run the UI under `vercel dev` to use an OIDC token instead.)
+# Vercel AI Gateway credential. Runs the voice (TTS + STT). Required.
 AI_GATEWAY_API_KEY=
 
 # Voice: 'gateway' (keyless, default) or 'elevenlabs' (premium, needs ELEVENLABS_KEY).
@@ -1172,19 +1129,18 @@ VOICE=onyx
 The person pastes `AI_GATEWAY_API_KEY` (you cannot get it for them). It comes from the Vercel
 dashboard → AI Gateway. See `references.md`.
 
-## Run it (against the mock brain)
+## Run it
 
 ```bash
 cd orb
-npm install        # or bun / pnpm
-# Run with the mock brain so the UI works before the backend exists:
-BRAIN_MODE=mock npm run dev
+bun install
+bun run dev
 ```
 
 Open the page. You should see the orb assemble and spin. Tap the mic, allow the microphone, say
-anything, tap again to send. With `BRAIN_MODE=mock` the canned reply streams in, gets spoken sentence
-by sentence, and the orb pulses with the voice. If that works, the **entire frontend is correct** and
-the only thing left is to point it at a real brain.
+anything, tap again to send. The reply streams in from the brain, gets spoken sentence by sentence,
+and the orb pulses with the voice. Voice (`/api/transcribe`, `/api/speak`) needs `AI_GATEWAY_API_KEY`;
+chat needs `BRAIN_URL` and `BRAIN_SECRET` pointing at a running brain (build it in `02-backend.md`).
 
 > If you only want to confirm the orb renders (no mic/voice), open the page; the orb does not need a
 > backend to draw.
@@ -1193,7 +1149,7 @@ Checklist before moving on:
 
 - [ ] Orb renders and animates.
 - [ ] Mic captures, `/api/transcribe` returns text (needs `AI_GATEWAY_API_KEY`).
-- [ ] `BRAIN_MODE=mock`: a turn streams a reply, it is spoken, the orb pulses.
+- [ ] A turn streams a reply from the brain, it is spoken, the orb pulses.
 - [ ] View source / network: **no key and no secret appear in the client bundle.**
 
-Next: `02-backend.md` — build the real brain, then flip `BRAIN_MODE` back to `sidecar`.
+Next: `02-backend.md`. Build the brain, then point the orb at it.

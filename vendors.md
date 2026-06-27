@@ -8,7 +8,7 @@ agent) wire them in. Secrets live in the **brain** or the **orb** env, **never**
 
 | Vendor | What it does in this build | Required? | Where the key comes from |
 | ------ | -------------------------- | --------- | ------------------------ |
-| **Vercel** | Hosts both projects (orb + brain), deploy-on-merge | **Required** | vercel.com → account |
+| **Vercel** | Hosts the brain (deploy-on-merge); the orb runs locally | **Required** | vercel.com → account |
 | **Vercel AI Gateway** | Runs the **model** (brain) and the **voice** — TTS + STT (orb), keyless | **Required** | Vercel dashboard → AI Gateway → API key |
 | **GitHub** | Private repo hosting + the deploy trigger (merge to `main`) | **Required** | github.com → account (+ `gh` CLI) |
 | **Anthropic (model)** | The brain's LLM (e.g. `anthropic/claude-haiku-4.5`) | **Required**, but **no separate key** | Routed *through* the AI Gateway — you do not hold an Anthropic key |
@@ -35,9 +35,9 @@ the only extra vendor keys, and only if the person opts into memory or premium v
 | Variable | Required? | Purpose |
 | -------- | --------- | ------- |
 | `AI_GATEWAY_API_KEY` | **Required** | Gateway credential that runs the voice (TTS + STT). Same key as the brain |
-| `BRAIN_URL` | **Required** | The brain's address. Local: `http://127.0.0.1:8787`. Prod: the brain's Vercel URL |
+| `BRAIN_URL` | **Required** | The brain's address. The deployed brain's Vercel URL (or `http://127.0.0.1:8787` for a local brain) |
 | `BRAIN_SECRET` | **Required** | The shared bearer. **Same value as the brain's `BRAIN_SECRET`** |
-| `BRAIN_MODE` | **Required** | `sidecar` (talk to the real brain) or `mock` (offline canned replies, no backend) |
+| `BRAIN_MODE` | **Required** | `remote` (the deployed brain, default) or `sidecar` (a brain you run locally) |
 | `VOICE_TIER` | Optional | `gateway` (default, keyless) or `elevenlabs` (premium) |
 | `VOICE` | Optional | Gateway voice name (default `onyx`) |
 | `ELEVENLABS_KEY` | Optional | ElevenLabs API key, only when `VOICE_TIER=elevenlabs` |
@@ -61,7 +61,7 @@ override). Dashes are not gateway ids and fail the build.
 Only four values, all from two vendors (Vercel + GitHub):
 
 - Brain: `AI_GATEWAY_API_KEY`, `BRAIN_SECRET`, `AGENT_MODEL`
-- Orb: `AI_GATEWAY_API_KEY`, `BRAIN_URL`, `BRAIN_SECRET`, `BRAIN_MODE=sidecar` (`AI_GATEWAY_API_KEY`
+- Orb: `AI_GATEWAY_API_KEY`, `BRAIN_URL`, `BRAIN_SECRET`, `BRAIN_MODE=remote` (`AI_GATEWAY_API_KEY`
   and `BRAIN_SECRET` are the same values as the brain's)
 
 Everything else (Cognee, ElevenLabs, tool keys) is opt-in, added when the person asks for that

@@ -22,8 +22,8 @@ gh repo create <name> --private --source=. --remote=origin --push
 - **Private, always.** This holds the person's keys-adjacent config and their product. Public is a
   leak waiting to happen. (Secrets themselves live in `.env` files that are gitignored — see step 5 —
   but the repo is private regardless.)
-- One repo holds **both** `orb/` (root) and `brain/` (subfolder). Two Vercel projects deploy from it
-  (see `guide/05-deploy.md`).
+- One repo holds **both** `orb/` (root) and `brain/` (subfolder). The brain deploys as one Vercel
+  project; the orb runs locally (see `guide/05-deploy.md`).
 
 ## 2. Branch, don't commit to `main`
 
@@ -42,13 +42,13 @@ branches review faster and roll back cleaner.
 
 ## 3. Merge to deploy
 
-A merge to `main` is the deploy. Open a PR, get it green, merge it; Vercel redeploys both projects on
-the merge. No manual `vercel deploy --prod` in the normal flow.
+A merge to `main` is the deploy. Open a PR, get it green, merge it; Vercel redeploys the brain on the
+merge. No manual `vercel deploy --prod` in the normal flow (an org policy may block it anyway).
 
 ```bash
 gh pr create --base main --head feat/<short-name> --title "<title>" --body "<what & why>"
 # review, then:
-gh pr merge <num> --merge      # merge -> Vercel redeploys orb + brain
+gh pr merge <num> --merge      # merge -> Vercel redeploys the brain
 ```
 
 - **Green before merge.** The brain must `eve build` cleanly; the orb must `next build`. Do not merge
@@ -101,7 +101,7 @@ flowchart LR
   A["private repo on main"] --> B["branch / worktree<br/>(one capability)"]
   B --> C["commit + push"]
   C --> D["PR -> green -> merge to main"]
-  D --> E["Vercel redeploys orb + brain"]
+  D --> E["Vercel redeploys the brain"]
   E --> F["remove worktree + delete branch<br/>(local & remote)"]
   F --> A
 ```

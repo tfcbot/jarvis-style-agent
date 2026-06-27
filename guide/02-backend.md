@@ -27,6 +27,7 @@ door built as a minimal Hono API. For the foundation, use EVE.)
 brain/
   package.json
   tsconfig.json
+  .node-version                     # 24
   .env                              # not committed
   .env.example
   agent/
@@ -45,6 +46,7 @@ brain/
   "name": "brain",
   "private": true,
   "type": "module",
+  "packageManager": "bun@1.3.10",
   "imports": { "#*": "./agent/*" },
   "scripts": {
     "dev": "eve dev",
@@ -376,6 +378,7 @@ node_modules
 .env*
 !.env.example
 .eve
+.workflow-data
 .vercel
 .output
 dist
@@ -390,14 +393,14 @@ the public internet and the brain, so make it long and random (e.g. `openssl ran
 
 ```bash
 cd brain
-npm install        # or bun / pnpm (match a lockfile if present)
+bun install
 
 # Build must succeed and emit .output. If it complains about the model,
-# the id is dashed — fix it to a dotted gateway id.
-AGENT_MODEL="anthropic/claude-haiku-4.5" npm run build
+# the id is dashed. Fix it to a dotted gateway id.
+AGENT_MODEL="anthropic/claude-haiku-4.5" bun run build
 
 # Start the brain on port 8787 (match the orb's BRAIN_URL).
-PORT=8787 npm run dev
+PORT=8787 bun run dev
 ```
 
 Smoke-test the door directly with curl (replace the secret with your `BRAIN_SECRET`):
@@ -412,9 +415,9 @@ curl -N http://127.0.0.1:8787/v1/chat/completions \
 You should see `data:` SSE frames stream a greeting, ending with `data: [DONE]`. A `401` means the
 bearer does not match; a `500` mentioning `BRAIN_SECRET` means it is not set.
 
-## Connect the orb to the real brain
+## Connect the orb to the brain
 
-Back in `orb/.env.local`, flip off the mock and point at the brain:
+In `orb/.env.local`, point the orb at this brain:
 
 ```bash
 BRAIN_MODE=sidecar
@@ -423,14 +426,14 @@ BRAIN_SECRET=        # the SAME value you set in brain/.env
 ```
 
 Run both (brain on 8787, orb on 3000), open the orb, tap the mic, say "hello." You should hear a
-spoken reply from the **real** brain, and the orb should pulse with it. That is "hello" working
-locally. Next, make it always-on.
+spoken reply from the brain, and the orb should pulse with it. That is "hello" working locally. Next,
+deploy the brain so it is always-on.
 
 Checklist:
 
 - [ ] `eve build` succeeds and emits `.output`.
 - [ ] curl to `/v1/chat/completions` streams a reply and ends with `[DONE]`.
 - [ ] Wrong bearer returns `401`.
-- [ ] Orb (`BRAIN_MODE=sidecar`) talks to the real brain end to end, with voice.
+- [ ] Orb (`BRAIN_MODE=sidecar`) talks to the brain end to end, with voice.
 
-Next: `05-deploy.md` — put both on Vercel, always on.
+Next: `05-deploy.md`. Deploy the brain to Vercel; run the orb locally.
