@@ -56,7 +56,8 @@ Then, only when the person asks for more:
 `docs/architecture.md` has the diagrams. `vendors.md` is the vendor + environment-variable checklist
 (every key, brain vs orb, required vs optional). `docs/devops.md` is the repo + deploy workflow
 (private repo, branch → merge-to-deploy, worktree cleanup). `references.md` has the platform docs and
-recommendations. `PRD.md` is the product definition if you need the why.
+recommendations. `PRD.md` is the technical spec: system architecture, folder structure, the backend
+API (OpenAPI), and the acceptance criteria.
 
 ## Rules of engagement
 

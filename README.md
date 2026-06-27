@@ -81,7 +81,7 @@ the rest is easy.
 ## Map of this repo
 
 - [`AGENTS.md`](./AGENTS.md) — the entry point your agent reads first.
-- [`PRD.md`](./PRD.md) — what this product is and is not.
+- [`PRD.md`](./PRD.md) — the technical spec: architecture, folder structure, backend API (OpenAPI), acceptance.
 - [`vendors.md`](./vendors.md) — vendors + every environment variable key (brain vs orb, required vs optional).
 - [`docs/architecture.md`](./docs/architecture.md) — the diagrams (layers, request flow, deploy topology).
 - [`docs/devops.md`](./docs/devops.md) — repo + deploy workflow (private repo, branch → merge-to-deploy, worktree cleanup).
