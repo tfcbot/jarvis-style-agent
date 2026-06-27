@@ -3,6 +3,10 @@
 Curated platform docs behind this build, plus what to reach for and why. Links are starting points;
 follow each platform's current docs for exact API shapes (endpoint names and payloads change).
 
+> For the **vendor list + every environment variable key** (which goes on the brain vs the orb,
+> required vs optional), see [`vendors.md`](./vendors.md). For the **repo + deploy workflow**, see
+> [`docs/devops.md`](./docs/devops.md).
+
 ## The backend framework
 
 - **EVE** — the filesystem-first agent framework the brain runs on. Files under `agent/` become the

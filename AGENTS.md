@@ -53,8 +53,10 @@ Then, only when the person asks for more:
 7. `guide/04-memory.md` — give the agent durable memory (Cognee).
 8. `guide/07-extensibility.md` — add tools, skills, MCP, swap the backend or the voice. Build it out.
 
-`docs/architecture.md` has the diagrams. `references.md` has the platform docs and recommendations.
-`PRD.md` is the product definition if you need the why.
+`docs/architecture.md` has the diagrams. `vendors.md` is the vendor + environment-variable checklist
+(every key, brain vs orb, required vs optional). `docs/devops.md` is the repo + deploy workflow
+(private repo, branch → merge-to-deploy, worktree cleanup). `references.md` has the platform docs and
+recommendations. `PRD.md` is the product definition if you need the why.
 
 ## Rules of engagement
 
@@ -72,6 +74,10 @@ Then, only when the person asks for more:
 - **Agnostic by design.** This guide assumes nothing about which agent you are. The instructions are
   plain prose and plain code. If your environment differs (package manager, shell), adapt the command,
   not the architecture.
+- **Work in a private repo, ship by merging to `main`.** Create the person's repo **private**. Branch
+  (or use a worktree) per change, open a PR, merge to `main` (that is the deploy), then **clean up the
+  branch and worktree**. Full workflow in `docs/devops.md`. Keys never get committed; only
+  `.env.example` files do.
 
 ## What "done" looks like
 
