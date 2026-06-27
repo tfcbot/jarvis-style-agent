@@ -1,0 +1,9 @@
+# This repo is a build guide (mostly markdown). Nothing here gets built or run.
+# These entries just keep stray local cruft out if someone scaffolds alongside it.
+.DS_Store
+node_modules/
+.env
+.env.*
+!.env.example
+.vercel/
+.output/
