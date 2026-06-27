@@ -40,14 +40,28 @@ brain/    the EVE agent: the model, its instructions, the door the orb talks to
 - **Built to extend.** The foundation is unopinionated. Add tools, give it memory, expose it to other
   apps, swap the voice — your agent does it from `guide/07-extensibility.md` when you ask.
 
-## What you need
+## Prerequisites
+
+Have these ready before you start. The foundation needs only two vendors (GitHub + Vercel); the
+gateway covers both the model and the voice, so there are no separate AI provider keys.
+
+**Tools**
 
 - A **coding agent** (this is a guide for one; e.g. Claude Code).
-- A **Vercel** account + an **AI Gateway** credential (`AI_GATEWAY_API_KEY`). The app deploys here and
-  the gateway runs both the model and the voice (speech in, speech out), keyless.
 - **Node 24+** locally (the brain needs it).
-- That is it for the foundation. Memory (Cognee) and any other integration are optional add-ons you
-  bring in later.
+- A **GitHub account** and the **GitHub CLI (`gh`)**, authenticated (`gh auth login`). Your agent
+  builds in your own **private** repo and ships by merging to `main`.
+- The **Vercel CLI** (`vercel`), and a `vercel login`. The app deploys to your Vercel.
+
+**Accounts / keys**
+
+- A **Vercel** account + an **AI Gateway** credential (`AI_GATEWAY_API_KEY`). The app deploys here and
+  the gateway runs **both the model and the voice** (speech in, speech out), keyless.
+- That is it for the foundation. **Cognee** (memory) and **ElevenLabs** (premium voice) are optional
+  add-ons you bring in later.
+
+See [`vendors.md`](./vendors.md) for the full vendor list and every environment variable (and which
+ones are required vs optional). See [`docs/devops.md`](./docs/devops.md) for the repo + deploy workflow.
 
 ## How to use it
 
@@ -68,6 +82,8 @@ the rest is easy.
 
 - [`AGENTS.md`](./AGENTS.md) — the entry point your agent reads first.
 - [`PRD.md`](./PRD.md) — what this product is and is not.
+- [`vendors.md`](./vendors.md) — vendors + every environment variable key (brain vs orb, required vs optional).
 - [`docs/architecture.md`](./docs/architecture.md) — the diagrams (layers, request flow, deploy topology).
+- [`docs/devops.md`](./docs/devops.md) — repo + deploy workflow (private repo, branch → merge-to-deploy, worktree cleanup).
 - `guide/00`–`07` — the build, in order. Start at `00-overview.md`.
 - [`references.md`](./references.md) — platform docs and recommendations.
