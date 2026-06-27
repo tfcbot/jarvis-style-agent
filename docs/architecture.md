@@ -127,8 +127,7 @@ flowchart LR
 - **Two Vercel projects off one repo.** The orb deploys from the repo root; the brain deploys with its
   **Root Directory set to `brain/`** and Vercel's **Eve** framework preset. Both redeploy on merge to
   `main`.
-- The orb reaches the brain by URL (`BRAIN_URL`) with a shared bearer (`BRAIN_SECRET` =
-  the brain's `OPENAI_SHIM_SECRET`). Because the orb proxies server-side, there is **no CORS** to deal
-  with.
+- The orb reaches the brain by URL (`BRAIN_URL`) with a shared bearer (`BRAIN_SECRET`, set to the same
+  value on both). Because the orb proxies server-side, there is **no CORS** to deal with.
 - One subdirectory gotcha (the brain lives in a subfolder of the orb's repo) is covered in
   `guide/05-deploy.md`. Get it wrong and the brain build fails; get it right and it is invisible.
