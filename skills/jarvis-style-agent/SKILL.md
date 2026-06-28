@@ -20,6 +20,22 @@ to the terminal.
 
 ---
 
+## Step 0 — Name it
+
+Before anything else, **make the person name their agent.** This is its identity, not a throwaway
+label — it becomes the repo name, the Vercel project, and the name it answers to when they say hello.
+
+- Ask: **"What do you want to call your agent?"** Give a nudge if they stall — `Jarvis`, `Friday`,
+  `Eve`, `Atlas`, or anything personal. Do not pick for them; make them choose.
+- Take their answer and derive a **slug** for repos/dirs: lowercase, hyphens, no spaces
+  (e.g. `Friday` → `friday`, `My Assistant` → `my-assistant`). Confirm both back: the **display name**
+  (what it answers to) and the **slug** (`<name>`). Use `<name>` everywhere a repo/dir/project name is
+  needed below, and carry the display name into the build so the agent introduces itself by it.
+
+Do not proceed until the person has named it.
+
+---
+
 ## Step 1 — Prerequisites: GitHub + Vercel ready
 
 The foundation needs exactly two vendors: **GitHub** (private repo + deploy trigger) and **Vercel**
@@ -55,11 +71,11 @@ Do not proceed until: `node`≥24, `gh auth status` clean, `vercel whoami` resol
 This project gets its own home. **Not the Desktop, not Downloads, not a folder that already has
 files in it.** A stray directory is how repos rot and how the wrong files get committed.
 
-- Ask the person where they want it, or propose a sensible default like `~/code/jarvis` or
-  `~/projects/jarvis`.
+- Default to a path built from the name slug from Step 0 — e.g. `~/code/<name>` — or let the person
+  pick their own. Either way it is dedicated to this project.
 - The directory must be **empty** (or not yet exist). Check it:
   ```bash
-  DIR="$HOME/code/jarvis"   # use the person's chosen path
+  DIR="$HOME/code/<name>"   # the name slug from Step 0, or the person's chosen path
   [ -e "$DIR" ] && [ -n "$(ls -A "$DIR" 2>/dev/null)" ] && echo "NOT EMPTY — pick another" || echo "ok"
   ```
 - If it is not empty, ask for a different path. Do not delete anything to make room.
@@ -112,7 +128,7 @@ person's config and product.
 gh repo create <name> --private --source=. --remote=origin --push
 ```
 
-Pick `<name>` with the person (e.g. `my-jarvis`). Confirm it created **private** with
+`<name>` is the slug from Step 0 (e.g. `friday`). Confirm it created **private** with
 `gh repo view --json visibility`.
 
 **Vercel — link a project for the brain.** The brain deploys here on merge-to-`main`; the orb runs
@@ -190,8 +206,9 @@ Confirm `.env` and `.env.local` are gitignored (`git status` shows neither). Com
 
 ## Done — hand off to the build
 
-When all five are green:
+When all of these are green:
 
+- ✅ The person has **named** their agent (display name + slug).
 - ✅ Node 24+, `gh` and `vercel` authenticated, `AI_GATEWAY_API_KEY` in hand.
 - ✅ A clean, dedicated workdir.
 - ✅ The guide cloned into `guide/`.
@@ -199,6 +216,7 @@ When all five are green:
 - ✅ `brain/.env` and `orb/.env.local` written with the four required values; secrets in Vercel.
 
 Tell the person bootstrap is complete, then **read `guide/AGENTS.md` and follow its build order** to
-build the orb and the brain, deploy the brain, and stop at "say hello, hear a reply." That clean
-foundation is the deliverable. From there, the person tells you what to build on top and you use
+build the orb and the brain, deploy the brain, and stop at "say hello, hear a reply." Carry the agent's
+**display name** from Step 0 into the build so it introduces itself by that name. That clean foundation
+is the deliverable. From there, the person tells you what to build on top and you use
 `guide/guide/07-extensibility.md`.
