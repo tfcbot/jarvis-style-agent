@@ -8,8 +8,8 @@ single spoken "hello" travels. Read this before building; the guide steps assume
 ```mermaid
 flowchart TB
   subgraph FE["FRONTEND  (orb/ — Next.js, the only thing the browser runs)"]
-    UI["Particle orb + mic button<br/>captures voice, plays speech, pulses while talking"]
-    BFF["BFF routes (server-side)<br/>/api/chat · /api/speak · /api/transcribe"]
+    UI["Particle orb + mic + HUD/boot overlay<br/>captures voice, plays speech, pulses while talking"]
+    BFF["BFF routes (server-side)<br/>/api/chat · /api/speak · /api/transcribe<br/>/api/events (SSE) · /api/config — optional"]
     UI <--> BFF
   end
 
