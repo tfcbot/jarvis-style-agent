@@ -9,10 +9,21 @@ else.
 > that are easy to get subtly wrong (the streaming SSE parse, the sentence cutter, the Web-Audio
 > amplitude loop, the orb shader). Everything else you may adapt to the person's setup.
 
+> **The layered UI further down (boot screen, HUD, settings, telemetry) is specified, not pinned.**
+> Those sections give the *intent*, a **folder structure to follow**, **example code** as a target
+> (adapt freely), and a **suggested prompt** you can hand your building agent — the agent owns the
+> implementation.
+>
+> **No "modes."** Do not add brain mode-switching (sidecar/remote/mock) or a mock brain to these
+> pieces — past attempts caused more trouble than they were worth. The orb already knows where the
+> brain is via `BRAIN_URL`; that is enough. (So the settings panel has no "brain mode" selector and
+> there is no `/api/health` mode badge.)
+
 ## Stack
 
 - **Next.js 16**, **React 19** (App Router).
 - **three.js** for the orb.
+- **d3-shape** / **d3-scale** for the HUD charts (decorative; optional — drop them if you drop the HUD).
 - The **Vercel AI SDK** (`ai`) with **`@ai-sdk/gateway`** for keyless voice (TTS + STT), and
   **`@ai-sdk/elevenlabs`** for the optional premium voice.
 
@@ -35,11 +46,16 @@ orb/
       chat/route.ts               # BFF: proxy a turn to the brain, stream SSE back   (PIN)
       speak/route.ts              # BFF: text -> speech (server-side)                  (PIN)
       transcribe/route.ts         # BFF: speech -> text (server-side)                  (PIN)
+      events/route.ts             # BFF: SSE telemetry feed for the HUD (optional)     (spec)
+      config/route.ts             # BFF: read/write settings to .env.local            (spec)
     components/
       Orb.tsx                     # the particle orb                                   (PIN)
       ChatBox.tsx                 # mic + stop controls, runs a turn                   (PIN)
       voice.ts                    # speaker (TTS queue) + mic recorder                 (PIN)
       voice-signal.ts             # shared 0..1 "is speaking" amplitude                (PIN)
+      Hud.tsx                     # HUD: reactor + charts (decorative + live)          (spec)
+      BootSequence.tsx            # boot / loading overlay                             (spec)
+      Settings.tsx                # runtime config panel (gear)                        (spec)
   lib/
     domain/chat.ts                # turn shape + the BFF->browser stream contract      (PIN)
     cut-sentences.ts              # split streamed text into sentences for TTS         (PIN)
@@ -48,6 +64,11 @@ orb/
     adapters/http-brain.ts        # real brain over the OpenAI-compatible shim         (PIN)
     adapters/brain-select.ts      # pick the brain from env                            (PIN)
     voice/tts.ts                  # pick TTS model + voice by tier                     (PIN)
+    domain/telemetry.ts           # HUD telemetry event contract + reducer (optional)  (spec)
+    ports/telemetry-source.ts     # the telemetry feed interface (optional)            (spec)
+    server/bus.ts                 # in-process pub/sub the brain publishes to (opt.)   (spec)
+    adapters/bus-telemetry.ts     # bus -> telemetry-source adapter (optional)         (spec)
+    server/env-file.ts            # read/write .env.local for the settings panel       (spec)
 ```
 
 ## Project config
@@ -1039,6 +1060,171 @@ export default function ChatBox() {
 }
 ```
 
+## The layered UI: boot screen, HUD, settings
+
+The orb + voice loop above is the whole *functional* product. Everything in this section is the
+**"Jarvis feel"** layered on top: a boot/loading overlay, a heads-up display, and a settings panel.
+None of it holds secrets or intelligence — it is presentation plus one optional telemetry feed.
+
+Each piece below is specified, not pinned: **what it is**, the **folder structure to follow**,
+**example code** as a target you can adapt, and a **suggested prompt** to hand your building agent.
+
+### The boot sequence
+
+A full-screen overlay that plays on first load: a glitching `J.A.R.V.I.S.` title, a "CALIBRATING"
+percentage ring, and a stream of boot-log lines (`PWR  arc reactor coil … ONLINE`) that reveal one by
+one, then fade out to expose the orb. Re-triggerable with the `R` key, a `⟳ REBOOT` button, or
+`window.dispatchEvent(new Event('jarvis:boot'))`. Auto-runs on load when `BOOT_ON_LOAD` is true.
+
+Folder:
+
+```
+app/components/
+  BootSequence.tsx        # the boot overlay (client component, no backend)
+```
+
+Example — the data and phase machine that drive it (trimmed):
+
+```tsx
+// Each line: [tag, label, status]. Streamed in one by one, ~210ms apart.
+const BOOT_LINES: [string, string, string][] = [
+  ['PWR', 'arc reactor coil', 'ONLINE'],
+  ['CORE', 'neural lattice', 'SYNCED'],
+  ['NET', 'uplink handshake', 'OK'],
+  ['VOX', 'acoustic voice model', 'LOADED'],
+  ['AI', 'inference engine', 'HOT'],
+];
+type Phase = 'boot' | 'ready' | 'fading' | 'hidden';
+// boot: reveal lines + ramp % → ready: "GOOD EVENING. ALL SYSTEMS ONLINE." → fading → hidden.
+```
+
+> **Suggested prompt**
+>
+> ```
+> Build app/components/BootSequence.tsx — a full-screen JARVIS boot overlay (Next.js client
+> component, no backend). On mount, stream ~8 boot-log lines one by one (each: a system tag like
+> PWR/CORE/NET/VOX/AI, a label, and a status like ONLINE/OK), while a "CALIBRATING" percentage ring
+> ramps 0→100. Then show a glitchy "J.A.R.V.I.S." title and a time-aware greeting
+> ("GOOD MORNING/AFTERNOON/EVENING. ALL SYSTEMS ONLINE."), hold ~850ms, fade out and unmount to
+> reveal the orb. Add a scanline overlay for CRT flavor. Re-trigger on the "R" key, a "⟳ REBOOT"
+> button, and a window 'jarvis:boot' event. Only auto-run on load when the BOOT_ON_LOAD config flag
+> is true. Dark background, cyan-on-black, monospace. Use the example BOOT_LINES + phase machine above.
+> ```
+
+### The HUD
+
+A heads-up display behind the orb: a central SVG "reactor" (concentric rings, ticks, a sweep hand)
+with corner panels of charts — sparklines, bars, donuts, gauges, meters — and a scrolling log feed.
+
+It has **two data layers**:
+
+- **Decorative (default):** ambient, client-side numbers that drift and animate. Pure flavor —
+  **fine to trim or delete entirely** for a calmer UI.
+- **Live (optional):** subscribes to `GET /api/events` (SSE) and folds telemetry into the parts of
+  the HUD that reflect the real agent — its state (idle/thinking/tool/speaking), the log feed, and a
+  few metrics. See "Telemetry feed" below.
+
+Charts use `d3-shape` + `d3-scale`. These are **decorative-only** dependencies — drop the charts and
+you can drop the deps.
+
+Folder:
+
+```
+app/components/
+  Hud.tsx                 # reactor + panels; decorative data + optional /api/events live layer
+```
+
+> **Suggested prompt**
+>
+> ```
+> Build app/components/Hud.tsx — a fixed, full-screen sci-fi HUD rendered BEHIND the orb (lower
+> z-index, pointer-events: none). Center: an SVG "reactor" — concentric rings, tick marks, slow
+> counter-rotating arcs, a sweep hand. Corners: panels with d3 charts (sparklines via d3-shape
+> line/area, small bar charts, donut/gauge rings, labeled meters), a scrolling log feed, and
+> top/bottom status bars ("J.A.R.V.I.S · <STATE>"). Drive it from two sources: (1) decorative ambient
+> data generated client-side and animated on a timer — keep it clearly separated so it can be deleted;
+> and (2) an OPTIONAL live layer: open an EventSource on /api/events and fold each telemetry event
+> into HUD state using the HudEvent/HudState contract from lib/domain/telemetry.ts. Monospace,
+> cyan-on-dark, backdrop-blurred panel frames. Do NOT add any brain "mode" or mock badge.
+> ```
+
+### Telemetry feed (optional live layer)
+
+The HUD's live layer is fed by a tiny in-process pub/sub bus: the brain-call path publishes events
+during a turn, and a BFF route streams them to the browser as SSE. This is **optional** — without it
+the HUD runs on decorative data and the orb still pulses from the voice signal. It slots into the
+existing ports/adapters shape:
+
+```
+app/api/
+  events/route.ts            # GET: SSE stream of telemetry frames for the HUD
+lib/
+  domain/telemetry.ts        # the HudEvent union + HudState + a pure reducer (the wire contract)
+  ports/telemetry-source.ts  # interface: an async source of HudEvents
+  server/bus.ts              # in-process pub/sub singleton the brain publishes to
+  adapters/bus-telemetry.ts  # adapts the bus to the telemetry-source port
+```
+
+The **wire contract** is the one piece worth fixing — server and client must agree on it:
+
+```ts
+export type AgentState = 'idle' | 'thinking' | 'tool' | 'speaking' | 'error';
+export type HudEvent =
+  | { type: 'status'; state: AgentState; model: string; uptime_s: number }
+  | { type: 'tool'; name: string; phase: 'start' | 'end'; ms?: number; ok?: boolean }
+  | { type: 'log'; ts: number; level: 'info' | 'warn' | 'error'; tag: string; text: string }
+  | { type: 'metric'; tokens_per_s?: number; latency_ms?: number; integrity?: number /* … */ };
+```
+
+Where events come from: in the existing `http-brain` adapter, publish `status: 'thinking'` when a turn
+starts, `tool` events around tool calls, `metric` updates as tokens stream, and
+`status: 'speaking' → 'idle'` as it finishes. No new "mode" concept — just activity on the one real brain.
+
+> **Suggested prompt**
+>
+> ```
+> Add an optional HUD telemetry feed. (1) lib/domain/telemetry.ts: define HudEvent (status | tool |
+> log | metric), HudState, initialHudState, and a pure applyEvent(state, event) reducer — the shared
+> wire contract. (2) lib/server/bus.ts: a globalThis-backed in-process pub/sub singleton (publish /
+> subscribe HudEvents; survives HMR). (3) lib/ports/telemetry-source.ts + lib/adapters/bus-telemetry.ts:
+> an async-iterable source backed by the bus. (4) app/api/events/route.ts: a GET handler that streams
+> the source as SSE (text/event-stream, force-dynamic, with an idle heartbeat). (5) In
+> lib/adapters/http-brain.ts, publish to the bus during a turn: status 'thinking' on start, tool
+> start/end around tool calls, metric updates while streaming, status 'speaking' then 'idle' at the
+> end. Do NOT add brain modes or a mock brain.
+> ```
+
+### Settings
+
+A gear-button panel for editing config at runtime. It reads a non-secret snapshot from
+`GET /api/config` and writes a subset back via `POST /api/config`, which persists to `.env.local`.
+Fields: brain URL, brain secret, model, voice tier, voice id, optional ElevenLabs key, and the
+`boot_on_load` toggle. **No brain "mode" selector** (see the no-modes note at the top of this file).
+
+Folder:
+
+```
+app/components/
+  Settings.tsx            # gear panel; GET/POST /api/config
+app/api/
+  config/route.ts         # GET snapshot (no secrets) + POST persist to .env.local
+lib/
+  server/env-file.ts      # read/write .env.local helper
+```
+
+> **Suggested prompt**
+>
+> ```
+> Build a runtime settings panel. app/components/Settings.tsx: a gear (⚙) button toggling a small
+> panel that GETs /api/config on open and POSTs edits on save. Fields: brain URL, brain secret
+> (password input, "unchanged" placeholder), model, voice tier (gateway|elevenlabs), voice id,
+> ElevenLabs key (only shown when tier=elevenlabs), and a "boot sequence on load" checkbox.
+> app/api/config/route.ts: GET returns a snapshot that NEVER echoes secrets (only *_set booleans +
+> active enums); POST persists a subset to .env.local (via a lib/server/env-file.ts helper) and
+> mirrors into process.env. Do NOT include a brain "mode" selector or a mock option.
+> ```
+
+
 ## The page
 
 `app/layout.tsx`:
@@ -1062,13 +1248,19 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 
 ```tsx
 import Orb from './components/Orb';
+import Hud from './components/Hud';
 import ChatBox from './components/ChatBox';
+import Settings from './components/Settings';
+import BootSequence from './components/BootSequence';
 
 export default function Page() {
   return (
     <main>
       <Orb />
+      <Hud />          {/* decorative HUD behind the orb; optional */}
       <ChatBox />
+      <Settings />     {/* gear config panel; optional */}
+      <BootSequence /> {/* boot overlay on top; gated by BOOT_ON_LOAD */}
     </main>
   );
 }
@@ -1104,6 +1296,8 @@ html, body { margin: 0; height: 100%; background: #02030a; color: #cfe6ff;
 .chat-stop:disabled { opacity: .35; cursor: default; }
 ```
 
+The layered UI (HUD, boot overlay, settings) brings its own classes — theme tokens, backdrop-blurred panels, scanlines, the boot ring and glitch title. Style those to taste; the **suggested prompts** in the sections above describe the look, so let your building agent generate the CSS. Keep the orb + chatbox rules above as the base.
+
 ## Environment
 
 Create `orb/.env.local` (never committed). The orb runs locally and points at the brain over
@@ -1124,6 +1318,9 @@ AI_GATEWAY_API_KEY=
 VOICE_TIER=gateway
 VOICE=onyx
 # ELEVENLABS_KEY=
+
+# UI: play the boot overlay on load (true/false). Editable in the settings panel.
+BOOT_ON_LOAD=true
 ```
 
 The person pastes `AI_GATEWAY_API_KEY` (you cannot get it for them). It comes from the Vercel
