@@ -5,9 +5,9 @@ you a **Jarvis-style voice agent**: a glowing particle orb you talk to out loud,
 brain, deployed to the web so it is always on. You say "hello," it says "hello" back, in a voice.
 
 You do not clone an app. Your agent recreates it from this guide, in your own private repo, on your
-own infrastructure, with your own keys. This guide gets you the **foundation**: the orb, the brain,
-deployed, talking. The hard part, done right. From there your agent builds the rest on top, as far as
-you want to take it.
+own infrastructure, with your own keys. This guide gets you the **foundation**: the orb running locally,
+the brain deployed, talking. The hard part, done right. From there your agent builds the rest on top, as
+far as you want to take it.
 
 ## The four concepts
 
@@ -36,7 +36,8 @@ brain/    the EVE agent: the model, its instructions, the door the orb talks to
 
 - **Talk to it.** Tap the mic, speak, and hear a spoken reply. The orb pulses with the voice.
 - **It is yours.** Your keys, your Vercel, your repo. Nothing of yours runs on anyone else's servers.
-- **Always on.** Deployed to Vercel and redeploys when you merge. No laptop required.
+- **Always on.** The brain deploys to Vercel and redeploys when you merge; the orb runs on your machine
+  and talks to it.
 - **Built to extend.** The foundation is unopinionated. Add tools, give it memory, expose it to other
   apps, swap the voice — your agent does it from `guide/07-extensibility.md` when you ask.
 
@@ -51,11 +52,11 @@ gateway covers both the model and the voice, so there are no separate AI provide
 - **Node 24+** locally (the brain needs it).
 - A **GitHub account** and the **GitHub CLI (`gh`)**, authenticated (`gh auth login`). Your agent
   builds in your own **private** repo and ships by merging to `main`.
-- The **Vercel CLI** (`vercel`), and a `vercel login`. The app deploys to your Vercel.
+- The **Vercel CLI** (`vercel`), and a `vercel login`. The brain deploys to your Vercel.
 
 **Accounts / keys**
 
-- A **Vercel** account + an **AI Gateway** credential (`AI_GATEWAY_API_KEY`). The app deploys here and
+- A **Vercel** account + an **AI Gateway** credential (`AI_GATEWAY_API_KEY`). The brain deploys here and
   the gateway runs **both the model and the voice** (speech in, speech out), keyless.
 - That is it for the foundation. **Cognee** (memory) and **ElevenLabs** (premium voice) are optional
   add-ons you bring in later.
@@ -67,8 +68,8 @@ ones are required vs optional). See [`docs/devops.md`](./docs/devops.md) for the
 
 1. Drop this guide into your project (or point your agent at this repo).
 2. Tell your agent: **"I want to build a Jarvis-style voice agent using this guide. Help me build it."**
-3. It reads `AGENTS.md`, then builds the orb, the brain, deploys both to Vercel, and stops when you can
-   say "hello" and hear a reply. That is the foundation.
+3. It reads `AGENTS.md`, then builds the orb and the brain, deploys the brain to Vercel, runs the orb
+   locally, and stops when you can say "hello" and hear a reply. That is the foundation.
 4. Then tell it what to build next. It uses the extensibility guide to build your backend out cleanly.
 
 ## What this guide covers (and where it stops)

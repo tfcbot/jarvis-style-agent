@@ -6,13 +6,13 @@ owns the result; **the agent** is the coding agent building from this guide.
 
 ## Purpose
 
-Build a voice agent: a particle-orb web frontend the user talks to, backed by an agent brain, deployed
-to Vercel, where the user can say "hello" and hear a spoken reply. The system is recreated from this
-guide in the user's own repo, on their own Vercel, with their own keys. No runtime is shipped; the
-guide ships contracts and verbatim-pinned code.
+Build a voice agent: a particle-orb web frontend the user talks to, backed by an agent brain on Vercel,
+where the user can say "hello" and hear a spoken reply. The orb runs on the user's machine; the brain is
+the deployed surface. The system is recreated from this guide in the user's own repo, on their own
+Vercel, with their own keys. No runtime is shipped; the guide ships contracts and verbatim-pinned code.
 
-The deliverable (the "foundation") is: **Frontend + Backend, deployed, voice round-trips.** Context and
-Memory are specified here and built on request; they do not gate acceptance.
+The deliverable (the "foundation") is: **Frontend running locally, Backend deployed, voice round-trips.**
+Context and Memory are specified here and built on request; they do not gate acceptance.
 
 ## Concepts (the architectural spine)
 
@@ -33,7 +33,7 @@ Four layers, one pattern.
 
 ```mermaid
 flowchart LR
-  subgraph orb["orb/  (Next.js — Vercel project 1)"]
+  subgraph orb["orb/  (Next.js — runs locally)"]
     UI["Orb UI + mic<br/>(browser, no secrets)"]
     R1["/api/chat"]
     R2["/api/speak"]
@@ -41,7 +41,7 @@ flowchart LR
     UI --> R1 & R2 & R3
   end
 
-  subgraph brain["brain/  (EVE — Vercel project 2)"]
+  subgraph brain["brain/  (EVE — the Vercel project)"]
     SHIM["POST /v1/chat/completions<br/>(bearer: BRAIN_SECRET)"]
     LOOP["agent loop: model + tools"]
     SHIM --> LOOP
@@ -64,10 +64,11 @@ The browser talks only to `orb/api/*`. Those routes hold `AI_GATEWAY_API_KEY` (v
 
 ## Folder structure
 
-One repo, two deployables (`orb/` at the root, `brain/` as a subfolder).
+One repo holds both (`orb/` at the root, `brain/` as a subfolder). The brain is the deployed Vercel
+project (Root Directory = `brain`); the orb runs locally and talks to it.
 
 ```
-<repo root>/                  # Vercel project 1: the orb (Next.js)
+<repo root>/                  # the orb (Next.js) — runs locally
   package.json
   tsconfig.json               # "exclude": ["brain"] — keeps the brain out of the orb build
   next.config.ts
@@ -89,12 +90,11 @@ One repo, two deployables (`orb/` at the root, `brain/` as a subfolder).
     cut-sentences.ts          # split streamed text into sentences for TTS
     openai-sse.ts             # parse OpenAI SSE -> content deltas
     ports/brain.ts            # Brain interface
-    adapters/http-brain.ts    # real brain over the shim
-    adapters/mock-brain.ts    # offline canned brain (build/dev without a backend)
-    adapters/brain-select.ts  # pick the brain from env
+    adapters/http-brain.ts    # the brain over the shim (always HTTP)
+    adapters/brain-select.ts  # pick the brain from env (BRAIN_URL + BRAIN_MODE)
     voice/tts.ts              # pick TTS model + voice by tier
 
-  brain/                      # Vercel project 2: the brain (EVE), Root Directory = brain
+  brain/                      # the brain (EVE) — the Vercel project, Root Directory = brain
     package.json              # type: module, imports "#*": "./agent/*", engines node >=24
     tsconfig.json
     .env.example
@@ -258,13 +258,13 @@ contract:
 
 The foundation is complete when all hold:
 
-1. The orb (Vercel project 1) loads; the orb renders and animates.
-2. The brain (Vercel project 2) answers `POST /v1/chat/completions` for a valid bearer with a streamed
+1. The orb loads from localhost (`bun run dev`); the orb renders and animates.
+2. The deployed brain answers `POST /v1/chat/completions` for a valid bearer with a streamed
    reply terminated by `data: [DONE]`; an invalid bearer returns `401`.
 3. End to end: mic → `POST /api/transcribe` → `POST /api/chat` → brain → streamed reply → per-sentence
    `POST /api/speak` → audio playback; the orb pulses with the audio amplitude.
-4. `AGENT_MODEL` is a dotted gateway id; both Vercel builds succeed.
-5. `BRAIN_SECRET` is identical on both projects; `BRAIN_URL` points at the brain.
+4. `AGENT_MODEL` is a dotted gateway id; the brain's Vercel build succeeds.
+5. `BRAIN_SECRET` is identical on the orb and the brain; `BRAIN_URL` points at the deployed brain.
 6. No secret (`AI_GATEWAY_API_KEY`, `BRAIN_SECRET`, model key) appears in the client bundle or any
    request the browser issues directly.
 
