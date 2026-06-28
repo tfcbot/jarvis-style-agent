@@ -16,7 +16,7 @@ follow each platform's current docs for exact API shapes (endpoint names and pay
 
 ## Hosting + model + voice
 
-- **Vercel** — hosting for both projects (orb + brain), deploy-on-merge via git integration.
+- **Vercel** — hosting for the brain, deploy-on-merge via git integration. The orb runs locally.
   https://vercel.com/docs
 - **Vercel AI Gateway** — runs the model **and** the voice (TTS + STT), keyless from your Vercel
   project. The `AI_GATEWAY_API_KEY` comes from here (Dashboard → AI Gateway).
@@ -71,7 +71,7 @@ follow each platform's current docs for exact API shapes (endpoint names and pay
 | ----------------------------------- | ------------------------------------------------- |
 | Build the agent brain               | EVE                                               |
 | Run the model + voice, keyless      | Vercel AI Gateway (dotted model ids)              |
-| Host it, always on                  | Vercel, two projects off one repo, deploy-on-merge |
+| Host it, always on                  | Vercel (the brain, deploy-on-merge); the orb runs locally |
 | Premium voice                       | ElevenLabs (one env flip)                         |
 | Durable, intelligent memory         | Cognee Cloud (BYO key, REST/MCP)                  |
 | Expose tools to other AI apps       | MCP                                               |
