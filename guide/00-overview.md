@@ -12,7 +12,9 @@ A talking agent is always the same four pieces. Naming them is the whole trick.
 The orb. It runs in the browser. Its entire job is sensory: draw something alive, capture the
 person's voice from the mic, play the agent's voice back, and look like it is listening and speaking.
 It contains **no intelligence and no secrets**. It does not know what a model is. You could replace
-the brain behind it and the orb would not notice.
+the brain behind it and the orb would not notice. A layered UI — a boot/loading overlay, a heads-up
+display, and a settings panel — sits on top for the "Jarvis" feel; it is presentation only and just as
+replaceable.
 
 ### Backend — the brain
 
@@ -42,7 +44,8 @@ Here is the rule that ties the layers together and keeps the whole thing safe an
 > else on the frontend's behalf.
 
 The orb never calls a model API. It never calls a voice API. It never holds a key. It calls its own
-server routes (`/api/chat`, `/api/speak`, `/api/transcribe`), and *those* call out. Those routes are
+server routes (`/api/chat`, `/api/speak`, `/api/transcribe`, plus the optional `/api/events` and
+`/api/config`), and *those* call out. Those routes are
 the **Backend-for-Frontend**: a thin server layer that exists to serve this one frontend, holding the
 secrets and doing the talking.
 

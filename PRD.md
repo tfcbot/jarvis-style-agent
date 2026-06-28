@@ -19,7 +19,8 @@ Context and Memory are specified here and built on request; they do not gate acc
 Four layers, one pattern.
 
 - **Frontend** — the orb. A Next.js app: renders the orb, captures mic audio, plays TTS audio, holds no
-  secrets, contains no model logic.
+  secrets, contains no model logic. A layered UI (boot overlay, HUD, settings) sits on top —
+  presentation only, no secrets.
 - **Backend** — the brain. An EVE agent exposing one HTTP door (`POST /v1/chat/completions`,
   OpenAI-compatible). Holds the model key, runs the agent loop.
 - **Context** — per-conversation state: the agent's instructions + the live transcript, assembled per
@@ -38,7 +39,12 @@ flowchart LR
     R1["/api/chat"]
     R2["/api/speak"]
     R3["/api/transcribe"]
-    UI --> R1 & R2 & R3
+    R4["/api/events (SSE, optional)"]
+    R5["/api/config"]
+    HUD["HUD + boot overlay<br/>(decorative; live via /api/events)"]
+    UI --> R1 & R2 & R3 & R5
+    HUD --> R4
+    R1 -. "telemetry" .-> R4
   end
 
   subgraph brain["brain/  (EVE — the Vercel project)"]
@@ -74,19 +80,25 @@ project (Root Directory = `brain`); the orb runs locally and talks to it.
   next.config.ts
   app/
     layout.tsx
-    page.tsx                  # renders <Orb/> + <ChatBox/>
+    page.tsx                  # renders <Orb/> <Hud/> <ChatBox/> <Settings/> <BootSequence/>
     globals.css
     api/
       chat/route.ts           # BFF: proxy a turn to the brain, stream SSE
       speak/route.ts          # BFF: text -> mp3 (TTS), server-side
       transcribe/route.ts     # BFF: audio -> text (STT), server-side
+      events/route.ts         # BFF: SSE telemetry feed for the HUD (optional)
+      config/route.ts         # BFF: read/write settings to .env.local
     components/
       Orb.tsx                 # three.js particle orb (uPulse driven by speech amplitude)
       ChatBox.tsx             # mic + stop controls; runs a turn
       voice.ts                # TTS speaker queue + mic recorder + amplitude sampling
       voice-signal.ts         # shared 0..1 "is speaking" amplitude
+      Hud.tsx                 # HUD: reactor + d3 charts (decorative + optional live)
+      BootSequence.tsx        # boot / loading overlay
+      Settings.tsx            # runtime config panel (gear)
   lib/
     domain/chat.ts            # ChatMessage + ChatDelta (BFF->browser contract)
+    domain/telemetry.ts       # HudEvent + HudState + reducer (HUD wire contract, optional)
     cut-sentences.ts          # split streamed text into sentences for TTS
     openai-sse.ts             # parse OpenAI SSE -> content deltas
     ports/brain.ts            # Brain interface
@@ -253,6 +265,9 @@ contract:
 | `POST /api/chat` | `{ messages: ChatMessage[], stream: true }` | SSE of `ChatDelta` (`{type:'delta',text}` / `{type:'done'}` / `{type:'error',error}`) | the brain's `/v1/chat/completions` |
 | `POST /api/speak` | `{ text: string, voice?: string }` | `audio/mpeg` (mp3 bytes) | AI Gateway TTS |
 | `POST /api/transcribe` | raw audio bytes (e.g. `audio/webm`) | `{ text: string }` | AI Gateway STT |
+| `GET /api/events` | — (SSE) | `text/event-stream` of `HudEvent` frames (`status`/`tool`/`log`/`metric`) | in-process telemetry bus (optional) |
+| `GET /api/config` | — | config snapshot — no secrets (`*_set` flags + active enums) | reads env |
+| `POST /api/config` | settings subset (incl. `boot_on_load`) | updated snapshot | persists to `.env.local` |
 
 ## Acceptance criteria
 
