@@ -18,14 +18,20 @@ follow each platform's current docs for exact API shapes (endpoint names and pay
 
 - **Vercel** — hosting for the brain, deploy-on-merge via git integration. The orb runs locally.
   https://vercel.com/docs
-- **Vercel AI Gateway** — runs the model **and** the voice (TTS + STT), keyless from your Vercel
-  project. The `AI_GATEWAY_API_KEY` comes from here (Dashboard → AI Gateway).
+- **Vercel AI Gateway** — runs the model **and** the realtime voice from one credential. The
+  `AI_GATEWAY_API_KEY` comes from here (Dashboard → AI Gateway); the orb's setup route uses it to
+  mint short-lived realtime client tokens, so the browser never holds it.
   https://vercel.com/docs/ai-gateway
-  - Use **dotted** model ids (`anthropic/claude-haiku-4.5`). Dashes are not gateway ids and fail the
-    build. `anthropic/claude-haiku-4.5` is the recommended default for low-latency voice.
-- **Vercel AI SDK (`ai`)** — `experimental_generateSpeech` (TTS) and `experimental_transcribe` (STT)
-  power the voice routes. These need the **canary** versions pinned in `01-frontend.md`.
-  https://sdk.vercel.ai
+  - Use **dotted** model ids (`anthropic/claude-haiku-4.5`, `openai/gpt-realtime-2`). Dashes are not
+    gateway ids and fail the build. `anthropic/claude-haiku-4.5` is the recommended brain default —
+    the tool round-trip is spoken aloud, so latency is the feel.
+- **Vercel AI SDK (`ai` + `@ai-sdk/gateway` + `@ai-sdk/react`)** — the realtime voice:
+  `gateway.experimental_realtime.getToken()` (server-side token mint),
+  `experimental_getRealtimeToolDefinitions` (tool defs for the session), and the
+  `experimental_useRealtime` React hook (the browser session — a WebSocket with Web Audio playback).
+  Stable v7/v4 packages, pinned in `01-frontend.md`. https://sdk.vercel.ai
+  - The hook keys its session on the **reference identity** of `model` and `sessionConfig` — pass
+    stable module-scope constants, never inline object literals.
 - **Vercel CLI** — `vercel link`, `vercel git connect`, `vercel env add`. The person does one
   `vercel login` (or sets `VERCEL_TOKEN` for headless). https://vercel.com/docs/cli
 
@@ -35,10 +41,11 @@ follow each platform's current docs for exact API shapes (endpoint names and pay
 - **React** — https://react.dev
 - **three.js** — the particle orb, bloom post-processing, shaders. https://threejs.org/docs
 
-## Voice (premium swap)
+## Voice
 
-- **ElevenLabs** — premium TTS via `@ai-sdk/elevenlabs`. One env flip (`VOICE_TIER=elevenlabs` +
-  `ELEVENLABS_KEY`); no code change (see `07-extensibility.md`). https://elevenlabs.io/docs
+- **`openai/gpt-realtime-2`** — the realtime speech model, served through the AI Gateway (no OpenAI
+  key). Session behavior (voice id, persona instructions, server-VAD turn detection) is set in
+  `sessionConfig`; see `07-extensibility.md` for tuning it.
   - For a managed talking-head/avatar instead of an orb, point a Custom-LLM avatar platform at the
     brain's OpenAI-compatible door (`/v1/chat/completions`); the brain does not change.
 
@@ -70,9 +77,9 @@ follow each platform's current docs for exact API shapes (endpoint names and pay
 | Want to...                          | Reach for                                         |
 | ----------------------------------- | ------------------------------------------------- |
 | Build the agent brain               | EVE                                               |
-| Run the model + voice, keyless      | Vercel AI Gateway (dotted model ids)              |
+| Run the model + realtime voice, one key | Vercel AI Gateway (dotted model ids)          |
 | Host it, always on                  | Vercel (the brain, deploy-on-merge); the orb runs locally |
-| Premium voice                       | ElevenLabs (one env flip)                         |
+| Tune the voice                      | the realtime `sessionConfig` (voice id, persona, turn detection) |
 | Durable, intelligent memory         | Cognee Cloud (BYO key, REST/MCP)                  |
 | Expose tools to other AI apps       | MCP                                               |
 | A minimal brain that only talks     | Hono (same door, no framework)                    |

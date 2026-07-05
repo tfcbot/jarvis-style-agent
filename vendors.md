@@ -9,15 +9,16 @@ agent) wire them in. Secrets live in the **brain** or the **orb** env, **never**
 | Vendor | What it does in this build | Required? | Where the key comes from |
 | ------ | -------------------------- | --------- | ------------------------ |
 | **Vercel** | Hosts the brain (deploy-on-merge); the orb runs locally | **Required** | vercel.com → account |
-| **Vercel AI Gateway** | Runs the **model** (brain) and the **voice** — TTS + STT (orb), keyless | **Required** | Vercel dashboard → AI Gateway → API key |
+| **Vercel AI Gateway** | Runs the **model** (brain) and the **realtime voice** (orb mints an ephemeral session token) | **Required** | Vercel dashboard → AI Gateway → API key |
 | **GitHub** | Private repo hosting + the deploy trigger (merge to `main`) | **Required** | github.com → account (+ `gh` CLI) |
 | **Anthropic (model)** | The brain's LLM (e.g. `anthropic/claude-haiku-4.5`) | **Required**, but **no separate key** | Routed *through* the AI Gateway — you do not hold an Anthropic key |
+| **OpenAI (realtime voice)** | The speech model (`openai/gpt-realtime-2`) | **Required**, but **no separate key** | Routed *through* the AI Gateway — you do not hold an OpenAI key |
 | **Cognee** | Durable memory (knowledge graph) when you add `04-memory.md` | Optional | Cognee Cloud → API key |
-| **ElevenLabs** | Premium voice (swap from the default gateway voice) | Optional | elevenlabs.io → API key |
 
-Key point: with the AI Gateway, **one credential (`AI_GATEWAY_API_KEY`) covers both the model and the
-voice.** You do not need separate OpenAI/Anthropic keys for the foundation. Cognee and ElevenLabs are
-the only extra vendor keys, and only if the person opts into memory or premium voice.
+Key point: with the AI Gateway, **one credential (`AI_GATEWAY_API_KEY`) covers both the model and
+the realtime voice.** You do not hold separate OpenAI/Anthropic keys at all. Cognee is the only
+extra vendor key, and only if the person opts into memory; any metrics/tool vendor added later
+brings its own key (see `07-extensibility.md`).
 
 ## Environment variables — the brain (`brain/.env`)
 
@@ -34,17 +35,12 @@ the only extra vendor keys, and only if the person opts into memory or premium v
 
 | Variable | Required? | Purpose |
 | -------- | --------- | ------- |
-| `AI_GATEWAY_API_KEY` | **Required** | Gateway credential that runs the voice (TTS + STT). Same key as the brain |
+| `AI_GATEWAY_API_KEY` | **Required** | Gateway credential that mints the realtime voice token (server-side). Same key as the brain |
 | `BRAIN_URL` | **Required** | The brain's address. The deployed brain's Vercel URL (or `http://127.0.0.1:8787` for a local brain) |
 | `BRAIN_SECRET` | **Required** | The shared bearer. **Same value as the brain's `BRAIN_SECRET`** |
 | `BRAIN_MODE` | **Required** | `remote` (the deployed brain, default) or `sidecar` (a brain you run locally) |
-| `VOICE_TIER` | Optional | `gateway` (default, keyless) or `elevenlabs` (premium) |
-| `VOICE` | Optional | Gateway voice name (default `onyx`) |
-| `ELEVENLABS_KEY` | Optional | ElevenLabs API key, only when `VOICE_TIER=elevenlabs` |
-| `ELEVENLABS_VOICE` | Optional | ElevenLabs voice id |
-| `ELEVENLABS_MODEL` | Optional | ElevenLabs model (default `eleven_flash_v2_5`) |
-| `TTS_MODEL` | Optional | Override the gateway TTS model (default `openai/tts-1-hd`) |
-| `STT_MODEL` | Optional | Override the gateway STT model (default `openai/gpt-4o-transcribe`) |
+| `REALTIME_MODEL` | Optional | Override the realtime speech model (default `openai/gpt-realtime-2`) |
+| `BOOT_ON_LOAD` | Optional | Play the boot overlay on load (default `true`; editable in the settings panel) |
 
 ## The values that must match
 
@@ -64,5 +60,5 @@ Only four values, all from two vendors (Vercel + GitHub):
 - Orb: `AI_GATEWAY_API_KEY`, `BRAIN_URL`, `BRAIN_SECRET`, `BRAIN_MODE=remote` (`AI_GATEWAY_API_KEY`
   and `BRAIN_SECRET` are the same values as the brain's)
 
-Everything else (Cognee, ElevenLabs, tool keys) is opt-in, added when the person asks for that
+Everything else (Cognee, metrics/tool vendor keys) is opt-in, added when the person asks for that
 capability. See `references.md` for vendor docs and `docs/devops.md` for how to run the repo/deploy.

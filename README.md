@@ -34,7 +34,8 @@ orb/      a Next.js app: the particle orb + the BFF routes + the voice loop
 brain/    the EVE agent: the model, its instructions, the door the orb talks to
 ```
 
-- **Talk to it.** Tap the mic, speak, and hear a spoken reply. The orb pulses with the voice.
+- **Talk to it.** Tap the status pill and just speak — it hears you live, answers in voice, and you
+  can talk over it to interrupt. The orb stirs with the voice.
 - **It is yours.** Your keys, your Vercel, your repo. Nothing of yours runs on anyone else's servers.
 - **Always on.** The brain deploys to Vercel and redeploys when you merge; the orb runs on your machine
   and talks to it.
@@ -57,9 +58,8 @@ gateway covers both the model and the voice, so there are no separate AI provide
 **Accounts / keys**
 
 - A **Vercel** account + an **AI Gateway** credential (`AI_GATEWAY_API_KEY`). The brain deploys here and
-  the gateway runs **both the model and the voice** (speech in, speech out), keyless.
-- That is it for the foundation. **Cognee** (memory) and **ElevenLabs** (premium voice) are optional
-  add-ons you bring in later.
+  the gateway runs **both the model and the realtime voice** — one credential, no separate AI keys.
+- That is it for the foundation. **Cognee** (memory) is an optional add-on you bring in later.
 
 See [`vendors.md`](./vendors.md) for the full vendor list and every environment variable (and which
 ones are required vs optional). See [`docs/devops.md`](./docs/devops.md) for the repo + deploy workflow.
