@@ -62,7 +62,7 @@ production URL in `orb/.env.local`:
 BRAIN_URL=https://<brain>.vercel.app   # the deployed brain
 BRAIN_MODE=remote
 BRAIN_SECRET=                          # the SAME value set on the brain
-AI_GATEWAY_API_KEY=                    # runs the voice (TTS + STT) from the local orb
+AI_GATEWAY_API_KEY=                    # mints the realtime voice token from the local orb
 ```
 
 Run it:
@@ -76,7 +76,7 @@ bun run dev                            # http://localhost:3000
 The browser calls only the orb's own `/api/*` routes; those hold the gateway key and the brain bearer
 server-side. No key reaches the page, and the brain answers only a request carrying the bearer.
 
-> Voice and inference bill to the user's Vercel team (the gateway runs both).
+> Realtime voice and inference bill to the user's Vercel team (the gateway runs both).
 
 ## The values that must match
 
