@@ -9,12 +9,12 @@ A talking agent is always the same four pieces. Naming them is the whole trick.
 
 ### Frontend — what the person talks to
 
-The orb. It runs in the browser. Its entire job is sensory: draw something alive, capture the
-person's voice from the mic, play the agent's voice back, and look like it is listening and speaking.
-It contains **no intelligence and no secrets**. It does not know what a model is. You could replace
-the brain behind it and the orb would not notice. A layered UI — a boot/loading overlay, a heads-up
-display, and a settings panel — sits on top for the "Jarvis" feel; it is presentation only and just as
-replaceable.
+The orb. It runs in the browser. Its entire job is sensory: draw something alive, hold a live
+realtime voice session the person talks into, and look like it is listening and speaking. It
+contains **no intelligence and no secrets** — the browser holds only a short-lived session token,
+never a key. You could replace the brain behind it and the orb would not notice. A layered UI — a
+boot/loading overlay, a live-metrics HUD, and a settings panel — sits around it for the "Jarvis"
+feel; it is presentation only and just as replaceable.
 
 ### Backend — the brain
 
@@ -43,11 +43,12 @@ Here is the rule that ties the layers together and keeps the whole thing safe an
 > The frontend talks to **one backend you own**, and nothing else. That backend talks to everything
 > else on the frontend's behalf.
 
-The orb never calls a model API. It never calls a voice API. It never holds a key. It calls its own
-server routes (`/api/chat`, `/api/speak`, `/api/transcribe`, plus the optional `/api/events` and
-`/api/config`), and *those* call out. Those routes are
-the **Backend-for-Frontend**: a thin server layer that exists to serve this one frontend, holding the
-secrets and doing the talking.
+The orb never calls a model API with a key. It calls its own server routes
+(`/api/realtime/setup`, `/api/realtime/ask`, plus the optional `/api/metrics`, `/api/events`, and
+`/api/config`), and *those* hold the secrets. The setup route mints a short-lived client token so
+the browser can open its realtime voice session — the gateway credential itself never leaves the
+server. Those routes are the **Backend-for-Frontend**: a thin server layer that exists to serve
+this one frontend, holding the secrets and doing the talking.
 
 Three payoffs, every time:
 
@@ -60,8 +61,8 @@ Three payoffs, every time:
 
 In this build BFF shows up twice, by design:
 
-- The **orb's `/api/*` routes** are the BFF for the browser (they hold the voice credential and the
-  brain's bearer).
+- The **orb's `/api/*` routes** are the BFF for the browser (they hold the gateway credential that
+  mints the realtime token, and the brain's bearer).
 - The **brain's OpenAI-compatible shim** is the BFF for the model and tools (it holds the model key
   and runs the agent loop).
 
@@ -82,8 +83,8 @@ deepen it afterward.
 
 ## The build, start to finish
 
-1. **Frontend** (`01-frontend.md`) — scaffold the Next.js orb, write the three BFF routes, the voice
-   loop, and the orb render.
+1. **Frontend** (`01-frontend.md`) — scaffold the Next.js orb, write the realtime voice wiring (the
+   token-mint and tool routes), and the orb render.
 2. **Backend** (`02-backend.md`) — scaffold the EVE brain, write its instructions and the
    OpenAI-compatible shim, run it locally, and point the orb at it. Now "hello" works on localhost.
 3. **Deploy** (`05-deploy.md`) — deploy the brain to Vercel (one project, deploy-on-merge); point the
