@@ -8,8 +8,15 @@ This is the Backend-for-Frontend for the model and tools: the shim holds the mod
 agent loop, and hands back plain streamed text. The orb never sees a model; it just talks to this
 door.
 
-> Why OpenAI-compatible? Because it is the lingua franca. The orb speaks it, and later so can any
-> other client (an MCP host, a voice avatar, a phone bridge). One door, many callers, no bespoke glue.
+The brain is the *thinking* half of **two brains, one voice**: the realtime speech model (built in
+`01-frontend.md`) handles ordinary conversation natively and calls this brain — through its one
+`ask_jarvis_brain` tool, via the orb's `/api/realtime/ask` route — whenever a request needs real
+data, tools, or a write. The brain does not know or care that a realtime model is the caller; it
+serves the same door either way.
+
+> Why OpenAI-compatible? Because it is the lingua franca. The realtime tool path speaks it, and so
+> can any other client (an MCP host, a voice avatar, a phone bridge). One door, many callers, no
+> bespoke glue.
 
 ## Why EVE
 
@@ -255,9 +262,9 @@ export default defineChannel({
         });
       }
 
-      // This endpoint drives a real-time voice loop, so steer EVE to spoken
-      // style per turn. Short + no markdown/URLs = faster to generate and clean
-      // for TTS.
+      // Replies from this endpoint are relayed aloud by the realtime voice
+      // model, so steer EVE to spoken style per turn. Short + no markdown/URLs
+      // = faster to generate and clean to speak.
       const SPOKEN =
         "[Voice mode: your reply is spoken aloud. Plain text only — no markdown, no asterisks, " +
         "no URLs. One clear point, at most two short sentences.]";

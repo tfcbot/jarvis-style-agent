@@ -1,34 +1,69 @@
 # 01 — Frontend: build the orb
 
-Build the **orb**: a Next.js app that draws a glowing particle sphere, captures the person's voice,
-plays the agent's voice back, and pulses in time with it. It holds **no secrets** and contains **no
-intelligence**. It talks only to its own server routes (the BFF), which do the talking to everything
-else.
+Build the **orb**: a Next.js app that draws a glowing particle sphere, runs a realtime voice session
+the person talks to, and surrounds the orb with a live-metrics HUD. It holds **no secrets** and
+contains **no intelligence**. It talks only to its own server routes (the BFF), which do the talking
+to everything else.
 
 > Pinned code below is marked **PIN — write verbatim**. Reproduce it exactly. These are the pieces
-> that are easy to get subtly wrong (the streaming SSE parse, the sentence cutter, the Web-Audio
-> amplitude loop, the orb shader). Everything else you may adapt to the person's setup.
+> that are easy to get subtly wrong (the realtime token mint, the tool round-trip, the streaming SSE
+> parse, the orb shader). Everything else you may adapt to the person's setup.
 
-> **The layered UI further down (boot screen, HUD, settings, telemetry) is specified, not pinned.**
-> Those sections give the *intent*, a **folder structure to follow**, **example code** as a target
-> (adapt freely), and a **suggested prompt** you can hand your building agent — the agent owns the
-> implementation.
+> **The layered UI further down (boot screen, live-metrics HUD, settings) is specified, not pinned.**
+> Those sections give the *intent*, a **folder structure to follow**, **contracts to honor**, and a
+> **suggested prompt** you can hand your building agent — the agent owns the implementation.
 >
-> **No "modes."** Do not add brain mode-switching (sidecar/remote/mock) or a mock brain to these
-> pieces — past attempts caused more trouble than they were worth. The orb already knows where the
-> brain is via `BRAIN_URL`; that is enough. (So the settings panel has no "brain mode" selector and
-> there is no `/api/health` mode badge.)
+> **No "modes."** Do not add brain mode-switching (sidecar/remote/mock) or a mock brain. The orb
+> knows where the brain is via `BRAIN_URL`; that is enough. (So the settings panel has no "brain
+> mode" selector and there is no `/api/health` mode badge.)
+
+## The voice architecture: two brains, one voice
+
+The person talks to a **realtime speech model** (`openai/gpt-realtime-2`, over the Vercel AI
+Gateway) that hears and speaks natively — no transcribe step, no TTS step, no per-sentence latency.
+Ordinary conversation is handled by the realtime model itself. It has exactly **one tool**,
+`ask_jarvis_brain`, which routes anything needing real data or an action to the EVE brain (the
+backend you build in `02-backend.md`) and relays the answer back in its own voice.
+
+The browser never holds `AI_GATEWAY_API_KEY`. A BFF route mints a **short-lived client token**
+(`vcst_…`) per session; the browser connects its WebSocket with that. This is the BFF pattern doing
+its job: the credential stays server-side, the browser gets a disposable pass.
+
+```
+Browser ──POST /api/realtime/setup──> BFF mints ephemeral token (holds AI_GATEWAY_API_KEY)
+Browser <═══ WebSocket (audio both ways) ═══> AI Gateway ──> gpt-realtime-2
+   model needs data → tool call ask_jarvis_brain
+Browser ──POST /api/realtime/ask──> BFF ──bearer──> brain /v1/chat/completions ──> {text} back
+```
+
+Three facts about the transport that shape everything else — design around them, do not fight them:
+
+1. **It is a WebSocket with Web Audio playback, not WebRTC.** The browser's acoustic echo canceller
+   only operates inside the WebRTC pipeline, so it never sees the model's output. On open speakers
+   the mic can re-capture the model's own voice, the server's voice-activity detection reads it as a
+   new user turn, and the model answers itself. Request `echoCancellation`/`noiseSuppression`/
+   `autoGainControl` on the mic anyway (they clean room noise), default to **full duplex** so
+   interruption works, and keep a **half-duplex flag** (disable the mic track while the model is
+   playing) as the documented fallback for pure-speaker setups.
+2. **The hook keys its session on reference identity.** `experimental_useRealtime` compares `model`
+   and `sessionConfig` with `!==` to decide whether to rebuild the session. Pass them as **stable
+   module-scope constants**. An inline object literal makes the SDK tear down and rebuild the
+   WebSocket on every render — and renders fire on every status change and audio-state toggle.
+3. **Barge-in rides on server VAD.** When the server hears the person start talking, it emits
+   `speech-started`; the SDK stops playback and truncates the interrupted reply. That means an
+   audible mic is what makes interruption work — which is why full duplex is the default.
 
 ## Stack
 
 - **Next.js 16**, **React 19** (App Router).
 - **three.js** for the orb.
-- **d3-shape** / **d3-scale** for the HUD charts (decorative; optional — drop them if you drop the HUD).
-- The **Vercel AI SDK** (`ai`) with **`@ai-sdk/gateway`** for keyless voice (TTS + STT), and
-  **`@ai-sdk/elevenlabs`** for the optional premium voice.
+- **d3-shape** / **d3-scale** for the HUD charts (sparklines, bars — the live-metrics panels).
+- The **Vercel AI SDK**: `ai` + `@ai-sdk/gateway` (realtime token minting, server-side) and
+  `@ai-sdk/react` (the `experimental_useRealtime` hook, browser-side).
 
-The orb talks to the brain over the brain's OpenAI-compatible shim. Build the brain in `02-backend.md`,
-then point the orb at it with `BRAIN_URL`. The orb runs locally; only the brain deploys.
+The realtime model speaks for itself; the EVE brain answers data questions through the one tool.
+Build the brain in `02-backend.md`, then point the orb at it with `BRAIN_URL`. The orb runs locally;
+only the brain deploys.
 
 ## File tree
 
@@ -43,32 +78,32 @@ orb/
     page.tsx
     globals.css
     api/
-      chat/route.ts               # BFF: proxy a turn to the brain, stream SSE back   (PIN)
-      speak/route.ts              # BFF: text -> speech (server-side)                  (PIN)
-      transcribe/route.ts         # BFF: speech -> text (server-side)                  (PIN)
-      events/route.ts             # BFF: SSE telemetry feed for the HUD (optional)     (spec)
-      config/route.ts             # BFF: read/write settings to .env.local            (spec)
+      realtime/
+        setup/route.ts            # BFF: mint the ephemeral realtime token + tool defs (PIN)
+        ask/route.ts              # BFF: the tool's landing pad -> brain -> {text}      (PIN)
+      metrics/route.ts            # BFF: GET snapshot / POST refresh (live HUD)         (spec)
+      events/route.ts             # BFF: SSE feed of live agent activity (optional)     (spec)
+      config/route.ts             # BFF: read/write settings to .env.local              (spec)
     components/
-      Orb.tsx                     # the particle orb                                   (PIN)
-      ChatBox.tsx                 # mic + stop controls, runs a turn                   (PIN)
-      voice.ts                    # speaker (TTS queue) + mic recorder                 (PIN)
-      voice-signal.ts             # shared 0..1 "is speaking" amplitude                (PIN)
-      Hud.tsx                     # HUD: reactor + charts (decorative + live)          (spec)
-      BootSequence.tsx            # boot / loading overlay                             (spec)
-      Settings.tsx                # runtime config panel (gear)                        (spec)
+      Orb.tsx                     # the particle orb                                    (PIN)
+      RealtimeVoice.tsx           # realtime session + status pill + mic control        (spec)
+      voice-signal.ts             # shared 0..1 "is speaking" amplitude                 (PIN)
+      Dashboard.tsx               # live-metrics HUD panels around the orb              (spec)
+      BootSequence.tsx            # boot / loading overlay                              (spec)
+      Settings.tsx                # runtime config panel (gear)                         (spec)
   lib/
-    domain/chat.ts                # turn shape + the BFF->browser stream contract      (PIN)
-    cut-sentences.ts              # split streamed text into sentences for TTS         (PIN)
-    openai-sse.ts                 # parse OpenAI SSE into content deltas               (PIN)
-    ports/brain.ts                # the Brain interface                                (PIN)
-    adapters/http-brain.ts        # real brain over the OpenAI-compatible shim         (PIN)
-    adapters/brain-select.ts      # pick the brain from env                            (PIN)
-    voice/tts.ts                  # pick TTS model + voice by tier                     (PIN)
-    domain/telemetry.ts           # HUD telemetry event contract + reducer (optional)  (spec)
-    ports/telemetry-source.ts     # the telemetry feed interface (optional)            (spec)
-    server/bus.ts                 # in-process pub/sub the brain publishes to (opt.)   (spec)
-    adapters/bus-telemetry.ts     # bus -> telemetry-source adapter (optional)         (spec)
-    server/env-file.ts            # read/write .env.local for the settings panel       (spec)
+    domain/chat.ts                # turn shape + stream contract                        (PIN)
+    openai-sse.ts                 # parse OpenAI SSE into content deltas                (PIN)
+    ports/brain.ts                # the Brain interface                                 (PIN)
+    adapters/http-brain.ts        # real brain over the OpenAI-compatible shim          (PIN)
+    adapters/brain-select.ts      # pick the brain from env                             (PIN)
+    domain/metrics.ts             # metrics snapshot contract for the HUD               (spec)
+    metrics/                      # vendor read adapters (installed as skills)          (spec)
+    domain/telemetry.ts           # HUD telemetry event contract + reducer (optional)   (spec)
+    ports/telemetry-source.ts     # the telemetry feed interface (optional)             (spec)
+    server/bus.ts                 # in-process pub/sub the brain publishes to (opt.)    (spec)
+    adapters/bus-telemetry.ts     # bus -> telemetry-source adapter (optional)          (spec)
+    server/env-file.ts            # read/write .env.local for the settings panel        (spec)
 ```
 
 ## Project config
@@ -87,15 +122,20 @@ orb/
     "start": "next start"
   },
   "dependencies": {
-    "@ai-sdk/elevenlabs": "^3.0.0-canary.49",
-    "@ai-sdk/gateway": "^4.0.0-canary.107",
-    "ai": "^7.0.0-canary.176",
+    "@ai-sdk/gateway": "^4.0.12",
+    "@ai-sdk/react": "^4.0.16",
+    "ai": "^7.0.15",
+    "d3-scale": "^4.0.2",
+    "d3-shape": "^3.2.0",
     "next": "16.2.9",
     "react": "19.2.4",
     "react-dom": "19.2.4",
-    "three": "^0.184.0"
+    "three": "^0.184.0",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@types/d3-scale": "^4.0.9",
+    "@types/d3-shape": "^3.1.8",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
@@ -105,8 +145,8 @@ orb/
 }
 ```
 
-> Voice (`experimental_generateSpeech` / `experimental_transcribe`) needs the AI SDK **canary**
-> versions above. Keep them.
+> Realtime voice (`experimental_useRealtime`, `gateway.experimental_realtime`) ships in the stable
+> `ai` v7 / `@ai-sdk/gateway` v4 / `@ai-sdk/react` v4 packages above. Keep them in sync.
 
 `tsconfig.json` — note the `"exclude": ["brain"]`. The brain lives in a sibling folder in the same
 repo (you will add it in `02-backend.md`); this keeps it out of the orb's TypeScript build. This
@@ -148,17 +188,16 @@ export default nextConfig;
 
 ## The BFF: domain contract
 
-This is the shape the browser and the routes agree on. Keep it tiny.
+The shape the ask route and the brain adapter agree on. Keep it tiny.
 
 `lib/domain/chat.ts` — **PIN — write verbatim:**
 
 ```ts
-// Domain: chat turn shape and the BFF->browser stream contract for /api/chat.
+// Domain: chat turn shape and the brain stream contract.
 
 export type ChatRole = 'user' | 'assistant' | 'system';
 export type ChatMessage = { role: ChatRole; content: string };
 
-// What /api/chat streams to the browser (one JSON object per SSE `data:` frame).
 export type ChatDelta =
   | { type: 'delta'; text: string }
   | { type: 'done' }
@@ -167,9 +206,9 @@ export type ChatDelta =
 
 ## The BFF: the brain port + adapters
 
-The orb does not call the brain directly from a route; it calls a small **`Brain` port** and an env
-switch picks the adapter (the HTTP brain). This is the BFF pattern in
-miniature: the route depends on an interface, not a provider.
+The ask route does not call the brain directly; it calls a small **`Brain` port** and an env switch
+picks the adapter (the HTTP brain). This is the BFF pattern in miniature: the route depends on an
+interface, not a provider.
 
 `lib/ports/brain.ts` — **PIN:**
 
@@ -295,11 +334,64 @@ export function selectBrain(): Brain {
 }
 ```
 
-## The BFF routes
+## Realtime voice: the two BFF routes
 
-Three server routes. The browser calls only these; they hold the secrets.
+Two server routes carry the whole voice architecture. The browser calls only these; they hold the
+secrets.
 
-`app/api/chat/route.ts` — **PIN** (run a turn against the selected brain, stream deltas as SSE):
+`app/api/realtime/setup/route.ts` — **PIN** (mint the ephemeral client token; define the ONE tool).
+The tool's `description` is a working contract, not documentation — the realtime model reads it to
+decide when to call. Keep the discipline: ordinary conversation is answered natively; the brain is
+the **only** source of truth for real data and actions. Tailor the description's examples to what
+the person's brain can actually do.
+
+```ts
+import { gateway } from '@ai-sdk/gateway';
+import { experimental_getRealtimeToolDefinitions as getRealtimeToolDefinitions, tool } from 'ai';
+import { z } from 'zod';
+
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
+
+// Two brains, one voice: the realtime model handles ordinary conversation
+// itself — natively, no tool call, no added latency. The ONE tool it can
+// reach for is this escape hatch to the EVE brain, used only for real data
+// or actions, where the brain's confirm-before-write gate is expected to add
+// a deliberate beat anyway.
+const tools = {
+  ask_jarvis_brain: tool({
+    description:
+      'Ask the operator brain a question or ask it to take an action — anything needing live data, ' +
+      'the catalog, writes, or the tools only it has. Do NOT use this for ordinary conversation, ' +
+      "small talk, or general knowledge — answer those yourself directly. Pass the person's request " +
+      'in their own words; relay the answer back plainly, without adding commentary of your own.',
+    inputSchema: z.object({
+      message: z.string().describe("the person's request, in their own words"),
+    }),
+  }),
+};
+
+// Ephemeral, short-lived client secret — the browser only ever holds this,
+// never AI_GATEWAY_API_KEY.
+export async function POST() {
+  try {
+    const toolDefinitions = await getRealtimeToolDefinitions({ tools });
+    const token = await gateway.experimental_realtime.getToken({
+      model: process.env.REALTIME_MODEL ?? 'openai/gpt-realtime-2',
+      sessionConfig: { tools: toolDefinitions },
+    });
+    return Response.json({ ...token, tools: toolDefinitions });
+  } catch (e) {
+    return Response.json(
+      { error: e instanceof Error ? e.message : 'realtime_setup_failed' },
+      { status: 502 },
+    );
+  }
+}
+```
+
+`app/api/realtime/ask/route.ts` — **PIN** (the tool's landing pad: run the message through the
+brain, accumulate the streamed reply into one string — a tool result returns whole, not streamed):
 
 ```ts
 import type { ChatMessage } from '@/lib/domain/chat';
@@ -309,177 +401,46 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 export async function POST(req: Request): Promise<Response> {
-  let messages: ChatMessage[] = [];
+  let message = '';
   try {
     const body = await req.json();
-    messages = Array.isArray(body?.messages) ? body.messages : [];
+    message = typeof body?.message === 'string' ? body.message : '';
   } catch {
     return Response.json({ error: 'bad_request' }, { status: 400 });
   }
-  if (messages.length === 0) return Response.json({ error: 'no_messages' }, { status: 400 });
+  if (!message.trim()) return Response.json({ error: 'no_message' }, { status: 400 });
 
+  const messages: ChatMessage[] = [{ role: 'user', content: message }];
   const brain = selectBrain();
   const ac = new AbortController();
   req.signal.addEventListener('abort', () => ac.abort());
-  const encoder = new TextEncoder();
-
-  const stream = new ReadableStream<Uint8Array>({
-    async start(controller) {
-      try {
-        for await (const delta of brain.chat(messages, ac.signal)) {
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify(delta)}\n\n`));
-        }
-      } catch {
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'error', error: 'brain_failed' })}\n\n`));
-      } finally {
-        try { controller.close(); } catch { /* already closed */ }
-      }
-    },
-    cancel() { ac.abort(); },
-  });
-
-  return new Response(stream, {
-    headers: {
-      'content-type': 'text/event-stream; charset=utf-8',
-      'cache-control': 'no-cache, no-transform',
-      connection: 'keep-alive',
-    },
-  });
-}
-```
-
-`lib/voice/tts.ts` — **PIN** (pick the TTS model + voice; default keyless gateway, optional
-ElevenLabs). The speak route uses this:
-
-```ts
-// Select the TTS model + voice by tier. Default: keyless gateway
-// (openai/tts-1-hd, onyx). Premium: ElevenLabs (Daniel) when VOICE_TIER=
-// elevenlabs and ELEVENLABS_KEY is set. Both run server-side; no key reaches the page.
-
-import { experimental_generateSpeech as generateSpeech } from 'ai';
-import { gateway } from '@ai-sdk/gateway';
-import { createElevenLabs } from '@ai-sdk/elevenlabs';
-
-type SpeechModelArg = Parameters<typeof generateSpeech>[0]['model'];
-
-const ELEVEN_DANIEL = 'onwK4e9ZLuTAKqWW03F9';
-
-export type TtsChoice = { model: SpeechModelArg; voice: string };
-
-export function selectTts(requestedVoice?: string): TtsChoice {
-  const tier = (process.env.VOICE_TIER ?? 'gateway').toLowerCase();
-
-  const elKey = process.env.ELEVENLABS_KEY ?? process.env.ELEVENLABS_API_KEY;
-  if (tier === 'elevenlabs' && elKey) {
-    const el = createElevenLabs({ apiKey: elKey });
-    return {
-      model: el.speech(process.env.ELEVENLABS_MODEL ?? 'eleven_flash_v2_5'),
-      voice: requestedVoice ?? process.env.ELEVENLABS_VOICE ?? ELEVEN_DANIEL,
-    };
-  }
-
-  return {
-    model: gateway.speechModel(process.env.TTS_MODEL ?? 'openai/tts-1-hd'),
-    voice: requestedVoice ?? process.env.VOICE ?? 'onyx',
-  };
-}
-```
-
-`app/api/speak/route.ts` — **PIN** (text → mp3, server-side):
-
-```ts
-import { experimental_generateSpeech as generateSpeech } from 'ai';
-import { selectTts } from '@/lib/voice/tts';
-
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
-
-export async function POST(req: Request): Promise<Response> {
-  let text = '';
-  let voice: string | undefined;
-  try {
-    const body = await req.json();
-    text = typeof body?.text === 'string' ? body.text : '';
-    voice = typeof body?.voice === 'string' ? body.voice : undefined;
-  } catch {
-    return Response.json({ error: 'bad_request' }, { status: 400 });
-  }
-  if (!text.trim()) return Response.json({ error: 'no_text' }, { status: 400 });
 
   try {
-    const tts = selectTts(voice);
-    const { audio } = await generateSpeech({ model: tts.model, text, voice: tts.voice, outputFormat: 'mp3' });
-    return new Response(new Uint8Array(audio.uint8Array), {
-      headers: { 'content-type': 'audio/mpeg', 'cache-control': 'no-store' },
-    });
-  } catch {
-    return Response.json({ error: 'tts_failed' }, { status: 502 });
-  }
-}
-```
-
-`app/api/transcribe/route.ts` — **PIN** (speech → text, server-side):
-
-```ts
-import { experimental_transcribe as transcribe } from 'ai';
-import { gateway } from '@ai-sdk/gateway';
-
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
-
-export async function POST(req: Request): Promise<Response> {
-  const bytes = new Uint8Array(await req.arrayBuffer());
-  if (bytes.length === 0) return Response.json({ error: 'no_audio' }, { status: 400 });
-
-  try {
-    const { text } = await transcribe({
-      model: gateway.transcriptionModel(process.env.STT_MODEL ?? 'openai/gpt-4o-transcribe'),
-      audio: bytes,
-    });
+    let text = '';
+    for await (const delta of brain.chat(messages, ac.signal)) {
+      if (delta.type === 'delta') text += delta.text;
+      else if (delta.type === 'error') throw new Error(delta.error);
+    }
     return Response.json({ text });
-  } catch {
-    return Response.json({ error: 'transcription_failed' }, { status: 502 });
+  } catch (e) {
+    return Response.json(
+      { error: e instanceof Error ? e.message : 'brain_failed' },
+      { status: 502 },
+    );
   }
 }
 ```
 
-## The voice loop
+## Realtime voice: the client
 
-This is what makes it feel live. Two ideas: **cut the reply into sentences as it streams** and speak
-each one immediately; and **sample the playing audio's amplitude** into a shared signal the orb reads.
-
-`lib/cut-sentences.ts` — **PIN — write verbatim** (guards the decimal-point case so "12.5" is not a
-sentence end):
-
-```ts
-// Split streamed text into complete sentences for per-sentence TTS, holding
-// back the trailing partial.
-
-export function cutSentences(s: string): { done: string[]; rest: string } {
-  const done: string[] = [];
-  let start = 0;
-  for (let i = 0; i < s.length; i++) {
-    const c = s[i];
-    if (c !== '.' && c !== '!' && c !== '?' && c !== '…') continue;
-    if (c === '.' && /[0-9]/.test(s[i - 1] ?? '') && /[0-9]/.test(s[i + 1] ?? '')) continue;
-    let j = i + 1;
-    while (j < s.length && /\s/.test(s[j]!)) j++;
-    done.push(s.slice(start, i + 1).trim());
-    start = j;
-    i = j - 1;
-  }
-  return { done, rest: s.slice(start) };
-}
-```
-
-`app/components/voice-signal.ts` — **PIN — write verbatim** (a module singleton the speaker writes
-and the orb reads, no prop drilling):
+`app/components/voice-signal.ts` — **PIN — write verbatim** (a module singleton the voice component
+writes and the orb reads, no prop drilling):
 
 ```ts
 'use client';
 
-// Shared 0..1 "agent is speaking" amplitude. The speaker writes it from the live
-// TTS audio envelope; the Orb reads it each frame to pulse.
+// Shared 0..1 "agent is speaking" amplitude. The voice component writes it from
+// the realtime session's playing state; the Orb reads it each frame to pulse.
 
 let amplitude = 0;
 
@@ -489,170 +450,65 @@ export const speechAmplitude = {
 };
 ```
 
-`app/components/voice.ts` — **PIN — write verbatim** (sentence-queued speaker through Web Audio +
-one-shot mic recorder; the amplitude RMS loop drives the orb):
+`app/components/RealtimeVoice.tsx` — **specified, not pinned.** The contracts it must honor:
 
-```ts
-'use client';
+- **Stable session references.** `const REALTIME_MODEL = gateway.experimental_realtime(MODEL_ID)`
+  and `const SESSION_CONFIG = { instructions, voice: 'alloy', turnDetection: { type: 'server-vad' },
+  inputAudioTranscription: {} }` live at **module scope**. Never inline them into the hook call
+  (see the transport facts above — inline objects rebuild the session every render).
+- **The hook**: `experimental_useRealtime({ model: REALTIME_MODEL, api: { token:
+  '/api/realtime/setup' }, sessionConfig: SESSION_CONFIG, onToolCall, onError })`. `onToolCall`
+  handles `ask_jarvis_brain` by POSTing `{ message }` to `/api/realtime/ask` and returning
+  `{ text }` (or `{ error }`).
+- **Connect flow**: `getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true,
+  autoGainControl: true } })` → `await realtime.connect()` → `realtime.startAudioCapture(stream)`.
+  Separate the two failure modes so the pill can name them: mic permission denied vs. session
+  connect failed.
+- **Full teardown on unmount**: call `realtime.disconnect()` (via a ref to the latest disconnect),
+  not just stopping mic tracks — an undisconnected session keeps listening and talking in the
+  background.
+- **The always-visible status pill.** One derived phase drives it, so a tap always produces visible
+  feedback and a failure names itself: `○ TAP TO TALK` (idle) → `CONNECTING…` → `● MIC LIVE`
+  (connected + capturing + not playing) → `JARVIS SPEAKING` (playing) → `⚠ MIC BLOCKED` /
+  `⚠ CONNECT FAILED — <reason>` (errors). The pill and the mic button are both tap-to-connect /
+  tap-to-end.
+- **Orb pulse**: a `requestAnimationFrame` loop easing `speechAmplitude` toward ~0.55 while
+  `realtime.isPlaying`, back to 0 when not. No audio analyser needed.
+- **Duplex**: full duplex by default (barge-in works). Keep a module-scope `HALF_DUPLEX: boolean =
+  false` flag; when true, disable the mic track (`track.enabled = false`) while `isPlaying` — the
+  fallback for a pure-speaker setup that starts talking to itself, at the cost of voice interruption.
 
-import { cutSentences } from '@/lib/cut-sentences';
-import { speechAmplitude } from './voice-signal';
-
-// Browser-side voice: a sentence-queued speaker (TTS via /api/speak, played in
-// order through Web Audio so we can read its amplitude, interruptible) and a
-// one-shot mic recorder (-> /api/transcribe). The amplitude drives the orb pulse.
-
-export type Speaker = {
-  push: (delta: string) => void;
-  finish: () => void;
-  stop: () => void;
-};
-
-let _ctx: AudioContext | null = null;
-let _analyser: AnalyserNode | null = null;
-function getAudio(): { ctx: AudioContext; analyser: AnalyserNode } {
-  if (!_ctx) {
-    const Ctx = window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-    _ctx = new Ctx();
-    _analyser = _ctx.createAnalyser();
-    _analyser.fftSize = 256;
-    _analyser.connect(_ctx.destination);
-  }
-  if (_ctx.state === 'suspended') void _ctx.resume().catch(() => {});
-  return { ctx: _ctx, analyser: _analyser! };
-}
-
-export function createSpeaker(opts?: { onIdle?: () => void }): Speaker {
-  let buffer = '';
-  const queue: string[] = [];
-  let pumping = false;
-  let stopped = false;
-  let current: AudioBufferSourceNode | null = null;
-  let ampRaf = 0;
-
-  const sampleAmplitude = () => {
-    const { analyser } = getAudio();
-    const data = new Uint8Array(analyser.fftSize);
-    const loop = () => {
-      analyser.getByteTimeDomainData(data);
-      let sum = 0;
-      for (let i = 0; i < data.length; i++) {
-        const v = (data[i] - 128) / 128;
-        sum += v * v;
-      }
-      speechAmplitude.set(Math.min(1, Math.sqrt(sum / data.length) * 2.4));
-      ampRaf = requestAnimationFrame(loop);
-    };
-    cancelAnimationFrame(ampRaf);
-    ampRaf = requestAnimationFrame(loop);
-  };
-  const stopAmplitude = () => {
-    cancelAnimationFrame(ampRaf);
-    ampRaf = 0;
-    speechAmplitude.set(0);
-  };
-
-  async function pump() {
-    if (pumping) return;
-    pumping = true;
-    sampleAmplitude();
-    while (!stopped && queue.length > 0) {
-      const sentence = queue.shift()!;
-      try {
-        const res = await fetch('/api/speak', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ text: sentence }),
-        });
-        if (stopped || !res.ok) continue;
-        const { ctx, analyser } = getAudio();
-        const audioBuf = await ctx.decodeAudioData(await res.arrayBuffer());
-        if (stopped) break;
-        await new Promise<void>((resolve) => {
-          const src = ctx.createBufferSource();
-          src.buffer = audioBuf;
-          src.connect(analyser);
-          src.onended = () => resolve();
-          current = src;
-          src.start();
-        });
-        current = null;
-      } catch {
-        // skip this sentence on failure
-      }
-    }
-    pumping = false;
-    stopAmplitude();
-    if (!stopped && queue.length === 0) opts?.onIdle?.();
-  }
-
-  const enqueue = (s: string) => {
-    const t = s.trim();
-    if (t) queue.push(t);
-  };
-
-  return {
-    push(delta) {
-      if (stopped) return;
-      buffer += delta;
-      const { done, rest } = cutSentences(buffer);
-      buffer = rest;
-      done.forEach(enqueue);
-      void pump();
-    },
-    finish() {
-      if (stopped) return;
-      enqueue(buffer);
-      buffer = '';
-      void pump();
-    },
-    stop() {
-      stopped = true;
-      queue.length = 0;
-      if (current) { try { current.stop(); } catch { /* already stopped */ } current = null; }
-      stopAmplitude();
-      opts?.onIdle?.();
-    },
-  };
-}
-
-export type Recorder = { stop: () => Promise<Blob> };
-
-export async function startRecording(): Promise<Recorder> {
-  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-  const mr = new MediaRecorder(stream);
-  const chunks: BlobPart[] = [];
-  mr.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
-  mr.start();
-  return {
-    stop: () =>
-      new Promise<Blob>((resolve) => {
-        mr.onstop = () => {
-          stream.getTracks().forEach((t) => t.stop());
-          resolve(new Blob(chunks, { type: mr.mimeType || 'audio/webm' }));
-        };
-        mr.stop();
-      }),
-  };
-}
-
-export async function transcribe(blob: Blob): Promise<string> {
-  const res = await fetch('/api/transcribe', {
-    method: 'POST',
-    headers: { 'content-type': blob.type || 'audio/webm' },
-    body: blob,
-  });
-  if (!res.ok) throw new Error('transcription_failed');
-  const { text } = (await res.json()) as { text: string };
-  return text;
-}
-```
+> **Suggested prompt**
+>
+> ```
+> Build app/components/RealtimeVoice.tsx — the realtime voice control (client component). Use
+> experimental_useRealtime from @ai-sdk/react with gateway.experimental_realtime('openai/gpt-realtime-2')
+> as a module-scope constant and a module-scope SESSION_CONFIG (instructions persona, voice 'alloy',
+> turnDetection server-vad, inputAudioTranscription {}) — never inline these into the hook call. Token
+> endpoint: POST /api/realtime/setup. onToolCall: handle 'ask_jarvis_brain' by POSTing {message} to
+> /api/realtime/ask and returning its {text} (or {error}). Render an always-visible tappable status
+> pill cycling: "○ TAP TO TALK" idle → "CONNECTING…" → "● MIC LIVE" (red, glowing; connected +
+> capturing + not playing) → "JARVIS SPEAKING" (playing) → "⚠ MIC BLOCKED" / "⚠ CONNECT FAILED —
+> <reason>" on errors — plus a round mic button with the same tap-to-connect/tap-to-end behavior.
+> Connect: getUserMedia with echoCancellation/noiseSuppression/autoGainControl, then connect(), then
+> startAudioCapture(stream); distinguish mic-permission failure from connect failure. Disconnect stops
+> capture, stops mic tracks, and calls realtime.disconnect(); also fully tear down on unmount via a
+> ref to the latest disconnect. Drive the shared speechAmplitude signal toward 0.55 while isPlaying
+> (rAF ease), 0 otherwise. Include a module-scope HALF_DUPLEX=false flag that, when true, sets the
+> mic track's enabled=false while isPlaying (speaker echo fallback; trades away barge-in).
+> The persona instructions: a capable, warm, concise voice assistant that answers ordinary
+> conversation itself and calls ask_jarvis_brain only for live data or actions, never inventing
+> those numbers.
+> ```
 
 ## The orb
 
 `app/components/Orb.tsx` — **PIN — write verbatim**. A three.js particle sphere (Fibonacci shell +
-bright rings) with a bloom pass. The key wiring for the voice: a `uPulse` shader uniform that each
-frame eases toward `speechAmplitude.get()`, so the orb expands and brightens while the agent talks.
+bright rings) with a bloom pass. It renders into whatever box its parent gives it (sizing from the
+container via ResizeObserver, pointer math from the canvas rect). The voice wiring: a `uPulse`
+shader uniform eases toward `speechAmplitude.get()` each frame — while the agent talks the orb
+**stirs** (breathing expansion, lifted drift) with only a gentle glow lift; movement carries the
+"talking" read, not brightness.
 
 ```tsx
 'use client';
@@ -668,6 +524,8 @@ import { speechAmplitude } from './voice-signal';
 const COUNT = 42000;
 const ORB_R = 1.75;
 
+// Glowing particle orb: a Fibonacci-sphere shell (even coverage) plus a few
+// bright great-circle rings, sampled into the particle system.
 function buildOrbPoints(): { pos: Float32Array; bright: Float32Array; count: number } {
   const pos: number[] = [];
   const bright: number[] = [];
@@ -675,14 +533,15 @@ function buildOrbPoints(): { pos: Float32Array; bright: Float32Array; count: num
 
   const shell = Math.floor(COUNT * 0.86);
   for (let i = 0; i < shell; i++) {
-    const y = 1 - (i / (shell - 1)) * 2;
+    const y = 1 - (i / (shell - 1)) * 2;     // 1 -> -1
     const rad = Math.sqrt(Math.max(0, 1 - y * y));
     const th = golden * i;
-    const jr = 1 + (Math.random() - 0.5) * 0.05;
+    const jr = 1 + (Math.random() - 0.5) * 0.05; // thin shell jitter
     pos.push(Math.cos(th) * rad * jr, y * jr, Math.sin(th) * rad * jr);
     bright.push(Math.random() < 0.14 ? 0.85 + Math.random() * 0.15 : 0.32 + Math.random() * 0.3);
   }
 
+  // bright great-circle rings for structure
   const rings = COUNT - shell;
   for (let i = 0; i < rings; i++) {
     const a = Math.random() * Math.PI * 2;
@@ -698,12 +557,16 @@ function buildOrbPoints(): { pos: Float32Array; bright: Float32Array; count: num
   return { pos: new Float32Array(pos), bright: new Float32Array(bright), count: bright.length };
 }
 
+// Renders into whatever box its parent gives it — sizing comes from the
+// container via ResizeObserver, pointer math from the canvas rect, so the same
+// living orb works at any scale.
 export default function Orb() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const cursorRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const canvas = canvasRef.current!;
+    const container = canvas.parentElement ?? document.body;
     const cursorEl = cursorRef.current!;
     const STILL = new URLSearchParams(window.location.search).has('assembled');
 
@@ -763,10 +626,13 @@ export default function Orb() {
           vBright = aBright;
           vec3 p = position;
           float t = uTime * 0.6 + aSeed * 6.2831;
-          p += 0.015 * vec3(sin(t), cos(t * 1.2), sin(t * 0.8));
-          p *= 1.0 + uPulse * 0.05;
+          // Ambient float, lifted a touch while speaking so the orb visibly
+          // stirs — movement carries the "talking" read, not brightness.
+          p += (0.015 + uPulse * 0.02) * vec3(sin(t), cos(t * 1.2), sin(t * 0.8));
+          // Speaking: a gentle breathing expansion (subtle motion, not a flare).
+          p *= 1.0 + uPulse * (0.028 + 0.022 * sin(uTime * 2.1 + aSeed * 6.2831));
           vec4 mv = modelViewMatrix * vec4(p, 1.0);
-          gl_PointSize = aSize * uPixelRatio * (7.0 / -mv.z) * (1.0 + uPulse * 0.5);
+          gl_PointSize = aSize * uPixelRatio * (7.0 / -mv.z) * (1.0 + uPulse * 0.18);
           gl_Position = projectionMatrix * mv;
         }
       `,
@@ -779,7 +645,7 @@ export default function Orb() {
           if (r2 > 1.0) discard;
           float core = 1.0 - smoothstep(0.0, 1.0, r2);
           vec3 col = mix(uColorLo, uColorHi, vBright);
-          gl_FragColor = vec4(col, core * (0.25 + 0.8 * vBright) * (1.0 + uPulse * 0.7));
+          gl_FragColor = vec4(col, core * (0.25 + 0.8 * vBright) * (1.0 + uPulse * 0.18));
         }
       `,
     });
@@ -790,7 +656,11 @@ export default function Orb() {
 
     const composer = new EffectComposer(renderer);
     composer.addPass(new RenderPass(scene, camera));
-    const bloom = new UnrealBloomPass(new THREE.Vector2(1, 1), 0.5, 0.65, 0.0);
+    // strength 0.34, radius 0.55, threshold 0.2 — a threshold above 0 means only
+    // the brighter ring/core particles bloom, so the orb reads as a structured
+    // glowing sphere instead of one washed-out blown-out ball.
+    const bloom = new UnrealBloomPass(new THREE.Vector2(1, 1), 0.34, 0.55, 0.2);
+    const BLOOM_BASE = 0.34;
     composer.addPass(bloom);
     const finalPass = new ShaderPass({
       uniforms: { tDiffuse: { value: null } },
@@ -808,18 +678,22 @@ export default function Orb() {
     finalPass.renderToScreen = true;
     composer.addPass(finalPass);
 
+    // interaction
     const pointer = new THREE.Vector2(0, 0);
     const pointerWorld = new THREE.Vector3(0, 0, 999);
     const rawPointer = { active: false };
     const raycaster = new THREE.Raycaster();
     const facePlane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
-    let burst = 0;
     let cursorTimer: ReturnType<typeof setTimeout>;
 
+    const clampNdc = (v: number) => Math.max(-1.2, Math.min(1.2, v));
     const updatePointer = (cx: number, cy: number) => {
       rawPointer.active = true;
-      pointer.x = (cx / window.innerWidth) * 2 - 1;
-      pointer.y = -(cy / window.innerHeight) * 2 + 1;
+      // NDC relative to the canvas box (not the window), clamped so a pointer
+      // far outside a small canvas doesn't yank the rotation.
+      const rect = canvas.getBoundingClientRect();
+      pointer.x = clampNdc(((cx - rect.left) / rect.width) * 2 - 1);
+      pointer.y = clampNdc(-((cy - rect.top) / rect.height) * 2 + 1);
       raycaster.setFromCamera(pointer, camera);
       raycaster.ray.intersectPlane(facePlane, pointerWorld);
       cursorEl.style.transform = `translate(${cx}px, ${cy}px)`;
@@ -831,13 +705,12 @@ export default function Orb() {
       cursorTimer = setTimeout(() => cursorEl.classList.remove('active'), 140);
     };
     const onLeave = () => { rawPointer.active = false; };
-    const onDown = () => { burst = 1.0; };
     const onTouch = (e: TouchEvent) => { if (e.touches[0]) updatePointer(e.touches[0].clientX, e.touches[0].clientY); };
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerleave', onLeave);
-    window.addEventListener('pointerdown', onDown);
     window.addEventListener('touchmove', onTouch, { passive: true });
 
+    // loop
     const REPEL_RADIUS = 1.0, REPEL_FORCE = 0.07, SPRING = 0.014, DAMP = 0.86;
     const clock = new THREE.Clock();
     let intro = STILL ? 1 : 0;
@@ -853,7 +726,8 @@ export default function Orb() {
       // Pulse the orb with the agent's live speech amplitude (smoothed).
       pulse += (speechAmplitude.get() - pulse) * 0.28;
       mat.uniforms.uPulse.value = pulse;
-      bloom.strength = 0.5 + pulse * 0.9;
+      // Subtle glow lift while speaking — a gentle bloom bump, not a flare.
+      bloom.strength = BLOOM_BASE + pulse * 0.16;
 
       spinY += dt * 0.16;
       points.rotation.y = spinY + pointer.x * 0.25;
@@ -879,28 +753,25 @@ export default function Orb() {
             vx += (dx / d) * f; vy += (dy / d) * f; vz += (0.5 - Math.random()) * f * 1.5;
           }
         }
-        if (burst > 0.001) {
-          const dx = arr[ix], dy = arr[iy], dz = arr[iz], d = Math.sqrt(dx * dx + dy * dy + dz * dz) + 1e-3;
-          vx += (dx / d) * burst * 0.04; vy += (dy / d) * burst * 0.04; vz += (dz / d) * burst * 0.04;
-        }
         vx *= DAMP; vy *= DAMP; vz *= DAMP;
         velocities[ix] = vx; velocities[iy] = vy; velocities[iz] = vz;
         arr[ix] += vx; arr[iy] += vy; arr[iz] += vz;
       }
       posAttr.needsUpdate = true;
-      burst *= 0.9;
 
       composer.render();
       frame = requestAnimationFrame(tick);
     };
 
     const resize = () => {
-      const w = window.innerWidth, h = window.innerHeight;
+      const w = Math.max(1, container.clientWidth), h = Math.max(1, container.clientHeight);
       renderer.setSize(w, h, false); composer.setSize(w, h); bloom.setSize(w, h);
       camera.aspect = w / h;
       camera.position.z = w / h < 0.85 ? 11 : 8.4;
       camera.updateProjectionMatrix();
     };
+    const ro = new ResizeObserver(resize);
+    ro.observe(container);
     window.addEventListener('resize', resize);
     resize();
     tick();
@@ -908,9 +779,9 @@ export default function Orb() {
     return () => {
       cancelAnimationFrame(frame);
       clearTimeout(cursorTimer);
+      ro.disconnect();
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerleave', onLeave);
-      window.removeEventListener('pointerdown', onDown);
       window.removeEventListener('touchmove', onTouch);
       window.removeEventListener('resize', resize);
       geo.dispose(); mat.dispose();
@@ -927,147 +798,14 @@ export default function Orb() {
 }
 ```
 
-## The controls
+## The layered UI: boot screen, live-metrics HUD, settings
 
-`app/components/ChatBox.tsx` — **PIN — write verbatim**. Voice-only: a mic button (tap to talk, tap
-again to send) and a stop button to barge in. It runs a turn: transcribe → `/api/chat` (SSE) →
-feed deltas to the speaker, which speaks and drives the orb.
+The orb + realtime voice above is the whole *functional* voice product. This section is the
+**"Jarvis feel"** layered around it: a boot/loading overlay, a live-metrics HUD, and a settings
+panel. None of it holds secrets or intelligence — it is presentation plus two thin data feeds.
 
-```tsx
-'use client';
-
-import { useRef, useState } from 'react';
-import type { ChatDelta, ChatMessage } from '@/lib/domain/chat';
-import { createSpeaker, startRecording, transcribe, type Recorder, type Speaker } from './voice';
-
-export default function ChatBox() {
-  const [reply, setReply] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [recording, setRecording] = useState(false);
-  const [speaking, setSpeaking] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const history = useRef<ChatMessage[]>([]);
-  const recorder = useRef<Recorder | null>(null);
-  const speaker = useRef<Speaker | null>(null);
-
-  async function runTurn(text: string) {
-    if (!text.trim() || busy) return;
-    setReply('');
-    setError(null);
-    setBusy(true);
-    setSpeaking(true);
-    history.current = [...history.current, { role: 'user', content: text }];
-    speaker.current = createSpeaker({ onIdle: () => setSpeaking(false) });
-
-    try {
-      const res = await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ messages: history.current, stream: true }),
-      });
-      if (!res.ok || !res.body) throw new Error('request_failed');
-
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buf = '';
-      let acc = '';
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        buf += decoder.decode(value, { stream: true });
-        let idx: number;
-        while ((idx = buf.indexOf('\n\n')) !== -1) {
-          const frame = buf.slice(0, idx);
-          buf = buf.slice(idx + 2);
-          const m = /^data:\s?(.*)$/m.exec(frame);
-          if (!m) continue;
-          const ev = JSON.parse(m[1]) as ChatDelta;
-          if (ev.type === 'delta') { acc += ev.text; setReply(acc); speaker.current?.push(ev.text); }
-          else if (ev.type === 'error') setError(ev.error);
-        }
-      }
-      speaker.current?.finish();
-      if (acc) history.current = [...history.current, { role: 'assistant', content: acc }];
-    } catch {
-      setError('brain_unreachable');
-      setSpeaking(false);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function toggleMic() {
-    speaker.current?.stop();
-    if (recording) {
-      const rec = recorder.current;
-      recorder.current = null;
-      setRecording(false);
-      if (!rec) return;
-      try {
-        const blob = await rec.stop();
-        setBusy(true);
-        const text = await transcribe(blob);
-        setBusy(false);
-        if (text.trim()) await runTurn(text);
-      } catch {
-        setBusy(false);
-        setError('transcription_failed');
-      }
-      return;
-    }
-    try {
-      recorder.current = await startRecording();
-      setRecording(true);
-      setError(null);
-    } catch {
-      setError('mic_unavailable');
-    }
-  }
-
-  function stopSpeaking() {
-    speaker.current?.stop();
-    setSpeaking(false);
-  }
-
-  return (
-    <div className="chatbox">
-      {(reply || error) && (
-        <div className={`chat-reply${error ? ' err' : ''}`}>{error ? `⚠ ${error}` : reply}</div>
-      )}
-      <div className="chat-controls">
-        <button
-          type="button"
-          className={`chat-mic${recording ? ' rec' : ''}`}
-          onClick={toggleMic}
-          aria-label={recording ? 'Stop and send' : 'Speak'}
-          title={recording ? 'Stop and send' : 'Speak'}
-        >
-          {recording ? '■' : '🎙'}
-        </button>
-        <button
-          type="button"
-          className="chat-stop"
-          onClick={stopSpeaking}
-          disabled={!speaking}
-          aria-label="Stop talking"
-          title="Stop talking"
-        >
-          🔇
-        </button>
-      </div>
-    </div>
-  );
-}
-```
-
-## The layered UI: boot screen, HUD, settings
-
-The orb + voice loop above is the whole *functional* product. Everything in this section is the
-**"Jarvis feel"** layered on top: a boot/loading overlay, a heads-up display, and a settings panel.
-None of it holds secrets or intelligence — it is presentation plus one optional telemetry feed.
-
-Each piece below is specified, not pinned: **what it is**, the **folder structure to follow**,
-**example code** as a target you can adapt, and a **suggested prompt** to hand your building agent.
+Each piece is specified, not pinned: **what it is**, the **folder structure to follow**, the
+**contracts to honor**, and a **suggested prompt** to hand your building agent.
 
 ### The boot sequence
 
@@ -1091,7 +829,7 @@ const BOOT_LINES: [string, string, string][] = [
   ['PWR', 'arc reactor coil', 'ONLINE'],
   ['CORE', 'neural lattice', 'SYNCED'],
   ['NET', 'uplink handshake', 'OK'],
-  ['VOX', 'acoustic voice model', 'LOADED'],
+  ['VOX', 'realtime voice session', 'READY'],
   ['AI', 'inference engine', 'HOT'],
 ];
 type Phase = 'boot' | 'ready' | 'fading' | 'hidden';
@@ -1111,57 +849,91 @@ type Phase = 'boot' | 'ready' | 'fading' | 'hidden';
 > is true. Dark background, cyan-on-black, monospace. Use the example BOOT_LINES + phase machine above.
 > ```
 
-### The HUD
+### The live-metrics HUD
 
-A heads-up display behind the orb: a central SVG "reactor" (concentric rings, ticks, a sweep hand)
-with corner panels of charts — sparklines, bars, donuts, gauges, meters — and a scrolling log feed.
+The orb is the centerpiece; the HUD arranges **around** it — real numbers from the person's own
+vendors, not ambient decoration. The layout:
 
-It has **two data layers**:
+- A **top row of ~6 metric cards**: one headline number each (e.g. sales, orders, average order
+  value, sessions, conversion, followers), a small sparkline, and a trend marker (▲/▼/▸) comparing
+  the second half of the window against the first.
+- A **left column** of store panels: a sales/day area chart with an orders/day bar strip, a
+  traffic panel (sessions/day line + conversion %/day), a top-products list, and an **activity
+  feed** (live agent events + vendor sync notes).
+- A **right column** of social panels: followers per platform (bar + per-account rows with a
+  total), recent post impressions (bar strip + per-post rows), a reach panel (per-platform meters +
+  totals for impressions/likes/comments/clicks), and an ads panel (spend, impressions, clicks,
+  spend/day) when an ad account is connected.
+- Small **data tags** orbiting the orb (e.g. `SESS 181`, `FLWR 392`, `CONV 1.1%`) tying the
+  centerpiece to the data.
 
-- **Decorative (default):** ambient, client-side numbers that drift and animate. Pure flavor —
-  **fine to trim or delete entirely** for a calmer UI.
-- **Live (optional):** subscribes to `GET /api/events` (SSE) and folds telemetry into the parts of
-  the HUD that reflect the real agent — its state (idle/thinking/tool/speaking), the log feed, and a
-  few metrics. See "Telemetry feed" below.
+Charts use `d3-shape` + `d3-scale` (lines, areas, bars); keep them quiet — thin strokes, dim grids,
+monospace numerals.
 
-Charts use `d3-shape` + `d3-scale`. These are **decorative-only** dependencies — drop the charts and
-you can drop the deps.
+**The data model is pull, never poll.** Vendors are read **only** when the person triggers a
+REFRESH (a button in the top bar): `POST /api/metrics` re-reads every configured vendor server-side,
+persists the snapshot (e.g. `.data/metrics.json`), and returns it; `GET /api/metrics` serves the
+last snapshot with its `syncedAt` timestamp on load. No timers, no background vendor calls. The SSE
+`/api/events` feed (below) is separate and carries **live agent activity only**.
+
+**The snapshot contract** (`lib/domain/metrics.ts`) is the piece to fix before building panels:
+one object with a slice per vendor, where every slice carries `configured: boolean` and an optional
+`error`, its headline numbers, and daily series as `{ date: string; value: number }[]` day-points.
+Each vendor slice degrades **independently** — one vendor failing never blanks the others. Panels
+for an unconfigured vendor render "not connected", never invented numbers.
+
+**Vendor adapters are not built here.** The HUD knows only the snapshot contract; the adapters that
+fill it (`lib/metrics/…` — a store platform, a social/ads platform) are installed as skills or built
+per `07-extensibility.md`, with their keys in server env. Until one is installed, its panels read
+"not connected" and the rest of the HUD works.
 
 Folder:
 
 ```
 app/components/
-  Hud.tsx                 # reactor + panels; decorative data + optional /api/events live layer
+  Dashboard.tsx            # the HUD: metric cards + store/social columns + feed + orb tags
+app/api/
+  metrics/route.ts         # GET last snapshot / POST refresh-now (reads vendors server-side)
+lib/
+  domain/metrics.ts        # the snapshot contract (per-vendor slices, DayPoint series)
+  metrics/                 # vendor read adapters (installed as skills; not part of the base)
 ```
 
 > **Suggested prompt**
 >
 > ```
-> Build app/components/Hud.tsx — a fixed, full-screen sci-fi HUD rendered BEHIND the orb (lower
-> z-index, pointer-events: none). Center: an SVG "reactor" — concentric rings, tick marks, slow
-> counter-rotating arcs, a sweep hand. Corners: panels with d3 charts (sparklines via d3-shape
-> line/area, small bar charts, donut/gauge rings, labeled meters), a scrolling log feed, and
-> top/bottom status bars ("J.A.R.V.I.S · <STATE>"). Drive it from two sources: (1) decorative ambient
-> data generated client-side and animated on a timer — keep it clearly separated so it can be deleted;
-> and (2) an OPTIONAL live layer: open an EventSource on /api/events and fold each telemetry event
-> into HUD state using the HudEvent/HudState contract from lib/domain/telemetry.ts. Monospace,
-> cyan-on-dark, backdrop-blurred panel frames. Do NOT add any brain "mode" or mock badge.
+> Build the live-metrics HUD. (1) lib/domain/metrics.ts: a MetricsSnapshot with a syncedAt timestamp
+> and one slice per vendor (store: sales/orders/AOV/sessions/conversion + salesByDay/ordersByDay/
+> sessionsByDay/conversionByDay + topProducts; social: accounts with per-platform followers +
+> followersTotal, recent posts with impressions/likes/comments/clicks, ads with spend/impressions/
+> clicks/spendByDay). Every slice has configured:boolean and error?:string; day series are
+> {date,value}[]. (2) app/api/metrics/route.ts: GET returns the persisted snapshot (.data/
+> metrics.json); POST re-reads all configured vendor adapters in lib/metrics/, persists, returns the
+> fresh snapshot. Never call vendors on GET or on a timer — refresh is user-triggered only. (3)
+> app/components/Dashboard.tsx: arrange panels AROUND a central orb stage — a top row of ~6 metric
+> cards (value, sparkline, ▲/▼/▸ trend of 2nd half vs 1st half of the window), a left store column
+> (sales/day area + orders/day bars, sessions/day line + conversion %/day, top products, activity
+> feed), a right social column (followers per platform, post impressions, reach meters, ads spend),
+> and 3-4 small data tags positioned around the orb. Charts with d3-shape/d3-scale: thin lines, dim
+> grids, tabular numerals, cyan-on-dark monospace panels with backdrop blur. A REFRESH button in the
+> top bar POSTs /api/metrics and shows "SYNCED <ago>". Slices with configured:false render a "not
+> connected" note — never fake numbers. Do NOT add any brain "mode" or mock badge.
 > ```
 
-### Telemetry feed (optional live layer)
+### Live agent activity (optional SSE feed)
 
-The HUD's live layer is fed by a tiny in-process pub/sub bus: the brain-call path publishes events
-during a turn, and a BFF route streams them to the browser as SSE. This is **optional** — without it
-the HUD runs on decorative data and the orb still pulses from the voice signal. It slots into the
-existing ports/adapters shape:
+A tiny in-process pub/sub bus: the ask route's brain-call path publishes events during a turn
+(status/log/metric), and a BFF route streams them to the browser as SSE for the activity feed and
+status line. This is **optional** — without it the feed shows vendor sync notes only, and the orb
+still pulses from the voice signal. It slots into the existing ports/adapters shape:
 
 ```
 app/api/
-  events/route.ts            # GET: SSE stream of telemetry frames for the HUD
+  events/route.ts            # GET: SSE stream of telemetry frames
 lib/
   domain/telemetry.ts        # the HudEvent union + HudState + a pure reducer (the wire contract)
   ports/telemetry-source.ts  # interface: an async source of HudEvents
-  server/bus.ts              # in-process pub/sub singleton the brain publishes to
+  server/bus.ts              # in-process pub/sub singleton the brain path publishes to
   adapters/bus-telemetry.ts  # adapts the bus to the telemetry-source port
 ```
 
@@ -1173,33 +945,33 @@ export type HudEvent =
   | { type: 'status'; state: AgentState; model: string; uptime_s: number }
   | { type: 'tool'; name: string; phase: 'start' | 'end'; ms?: number; ok?: boolean }
   | { type: 'log'; ts: number; level: 'info' | 'warn' | 'error'; tag: string; text: string }
-  | { type: 'metric'; tokens_per_s?: number; latency_ms?: number; integrity?: number /* … */ };
+  | { type: 'metric'; tokens_per_s?: number; latency_ms?: number };
 ```
 
-Where events come from: in the existing `http-brain` adapter, publish `status: 'thinking'` when a turn
-starts, `tool` events around tool calls, `metric` updates as tokens stream, and
-`status: 'speaking' → 'idle'` as it finishes. No new "mode" concept — just activity on the one real brain.
+Where events come from: in `http-brain`, publish `status: 'thinking'` when a turn starts, `metric`
+updates as tokens stream, and `status: 'speaking' → 'idle'` as it finishes. No "mode" concept —
+just activity on the one real brain.
 
 > **Suggested prompt**
 >
 > ```
-> Add an optional HUD telemetry feed. (1) lib/domain/telemetry.ts: define HudEvent (status | tool |
+> Add an optional live-activity feed. (1) lib/domain/telemetry.ts: define HudEvent (status | tool |
 > log | metric), HudState, initialHudState, and a pure applyEvent(state, event) reducer — the shared
 > wire contract. (2) lib/server/bus.ts: a globalThis-backed in-process pub/sub singleton (publish /
 > subscribe HudEvents; survives HMR). (3) lib/ports/telemetry-source.ts + lib/adapters/bus-telemetry.ts:
 > an async-iterable source backed by the bus. (4) app/api/events/route.ts: a GET handler that streams
 > the source as SSE (text/event-stream, force-dynamic, with an idle heartbeat). (5) In
-> lib/adapters/http-brain.ts, publish to the bus during a turn: status 'thinking' on start, tool
-> start/end around tool calls, metric updates while streaming, status 'speaking' then 'idle' at the
-> end. Do NOT add brain modes or a mock brain.
+> lib/adapters/http-brain.ts, publish to the bus during a turn: status 'thinking' on start, metric
+> updates while streaming, status 'speaking' then 'idle' at the end. Fold the events into the
+> Dashboard's activity feed and status line. Do NOT add brain modes or a mock brain.
 > ```
 
 ### Settings
 
 A gear-button panel for editing config at runtime. It reads a non-secret snapshot from
 `GET /api/config` and writes a subset back via `POST /api/config`, which persists to `.env.local`.
-Fields: brain URL, brain secret, model, voice tier, voice id, optional ElevenLabs key, and the
-`boot_on_load` toggle. **No brain "mode" selector** (see the no-modes note at the top of this file).
+Fields: brain URL, brain secret, model, and the `boot_on_load` toggle. **No brain "mode" selector**
+(see the no-modes note at the top of this file).
 
 Folder:
 
@@ -1217,13 +989,11 @@ lib/
 > ```
 > Build a runtime settings panel. app/components/Settings.tsx: a gear (⚙) button toggling a small
 > panel that GETs /api/config on open and POSTs edits on save. Fields: brain URL, brain secret
-> (password input, "unchanged" placeholder), model, voice tier (gateway|elevenlabs), voice id,
-> ElevenLabs key (only shown when tier=elevenlabs), and a "boot sequence on load" checkbox.
+> (password input, "unchanged" placeholder), model, and a "boot sequence on load" checkbox.
 > app/api/config/route.ts: GET returns a snapshot that NEVER echoes secrets (only *_set booleans +
 > active enums); POST persists a subset to .env.local (via a lib/server/env-file.ts helper) and
 > mirrors into process.env. Do NOT include a brain "mode" selector or a mock option.
 > ```
-
 
 ## The page
 
@@ -1244,21 +1014,24 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 }
 ```
 
-`app/page.tsx`:
+`app/page.tsx` — the orb is the centerpiece; the HUD arranges around it:
 
 ```tsx
 import Orb from './components/Orb';
-import Hud from './components/Hud';
-import ChatBox from './components/ChatBox';
+import Dashboard from './components/Dashboard';
+import RealtimeVoice from './components/RealtimeVoice';
 import Settings from './components/Settings';
 import BootSequence from './components/BootSequence';
 
 export default function Page() {
   return (
     <main>
-      <Orb />
-      <Hud />          {/* decorative HUD behind the orb; optional */}
-      <ChatBox />
+      {/* The orb is the centerpiece; the HUD panels arrange around it. */}
+      <div className="orb-stage">
+        <Orb />
+      </div>
+      <Dashboard />
+      <RealtimeVoice />
       <Settings />     {/* gear config panel; optional */}
       <BootSequence /> {/* boot overlay on top; gated by BOOT_ON_LOAD */}
     </main>
@@ -1266,8 +1039,9 @@ export default function Page() {
 }
 ```
 
-`app/globals.css` — minimal styling for the classes the components use (orb canvas fills the screen;
-controls float bottom-center). Adapt freely; this is the one place taste is welcome.
+`app/globals.css` — base styling for the orb stage and the voice controls; the HUD and boot overlay
+bring their own classes (let your building agent generate those from the suggested prompts). Adapt
+freely; this is the one place taste is welcome.
 
 ```css
 :root { color-scheme: dark; }
@@ -1275,28 +1049,32 @@ controls float bottom-center). Adapt freely; this is the one place taste is welc
 html, body { margin: 0; height: 100%; background: #02030a; color: #cfe6ff;
   font-family: ui-sans-serif, system-ui, -apple-system, sans-serif; overflow: hidden; }
 
-.scene { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block; }
+/* The orb's container — the canvas sizes itself to this box. */
+.orb-stage { position: fixed; inset: 0; }
+.scene { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
 .cursor { position: fixed; top: 0; left: 0; width: 10px; height: 10px; margin: -5px 0 0 -5px;
   border-radius: 50%; background: #bfe6ff; opacity: 0; pointer-events: none;
   transition: opacity .2s; mix-blend-mode: screen; }
 .cursor.active { opacity: .7; }
 
+/* Voice control: the status pill + mic button, floating bottom-center. */
 .chatbox { position: fixed; left: 50%; bottom: 5vh; transform: translateX(-50%);
   display: flex; flex-direction: column; align-items: center; gap: 14px; z-index: 10; }
-.chat-reply { max-width: 70ch; padding: 10px 16px; border-radius: 14px; text-align: center;
+.rt-status { display: inline-flex; align-items: center; gap: 8px; padding: 6px 14px;
+  border-radius: 999px; font-family: ui-monospace, Menlo, monospace; font-size: 11px;
+  letter-spacing: .14em; cursor: pointer; color: #9fc2e8;
   background: rgba(8, 16, 40, .55); backdrop-filter: blur(8px);
-  border: 1px solid rgba(120, 170, 255, .18); font-size: 15px; line-height: 1.4; }
-.chat-reply.err { color: #ff9b9b; border-color: rgba(255, 120, 120, .35); }
-.chat-controls { display: flex; gap: 12px; }
-.chat-mic, .chat-stop { width: 56px; height: 56px; border-radius: 50%; cursor: pointer;
+  border: 1px solid rgba(120, 170, 255, .25); transition: .18s ease; }
+.rt-status .rt-dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.rt-hot { color: #ff6b6b; border-color: rgba(255, 90, 90, .5); }
+.rt-hot .rt-dot { box-shadow: 0 0 8px #ff5a5a; }
+.rt-error { color: #ffb454; border-color: rgba(255, 180, 84, .5); }
+.chat-mic { width: 56px; height: 56px; border-radius: 50%; cursor: pointer;
   font-size: 20px; color: #cfe6ff; background: rgba(20, 82, 255, .18);
   border: 1px solid rgba(120, 170, 255, .35); transition: transform .1s, background .2s; }
-.chat-mic:hover, .chat-stop:hover:not(:disabled) { transform: scale(1.06); }
-.chat-mic.rec { background: rgba(255, 60, 60, .35); border-color: rgba(255, 120, 120, .6); }
-.chat-stop:disabled { opacity: .35; cursor: default; }
+.chat-mic:hover { transform: scale(1.06); }
+.chat-mic.hot { background: rgba(255, 60, 60, .35); border-color: rgba(255, 120, 120, .6); }
 ```
-
-The layered UI (HUD, boot overlay, settings) brings its own classes — theme tokens, backdrop-blurred panels, scanlines, the boot ring and glitch title. Style those to taste; the **suggested prompts** in the sections above describe the look, so let your building agent generate the CSS. Keep the orb + chatbox rules above as the base.
 
 ## Environment
 
@@ -1311,13 +1089,11 @@ BRAIN_MODE=remote
 # Must equal BRAIN_SECRET in the brain (you set this in 02-backend.md).
 BRAIN_SECRET=
 
-# Vercel AI Gateway credential. Runs the voice (TTS + STT). Required.
+# Vercel AI Gateway credential. Mints the realtime voice token server-side. Required.
 AI_GATEWAY_API_KEY=
 
-# Voice: 'gateway' (keyless, default) or 'elevenlabs' (premium, needs ELEVENLABS_KEY).
-VOICE_TIER=gateway
-VOICE=onyx
-# ELEVENLABS_KEY=
+# Optional: override the realtime speech model (default openai/gpt-realtime-2).
+# REALTIME_MODEL=
 
 # UI: play the boot overlay on load (true/false). Editable in the settings panel.
 BOOT_ON_LOAD=true
@@ -1334,10 +1110,12 @@ bun install
 bun run dev
 ```
 
-Open the page. You should see the orb assemble and spin. Tap the mic, allow the microphone, say
-anything, tap again to send. The reply streams in from the brain, gets spoken sentence by sentence,
-and the orb pulses with the voice. Voice (`/api/transcribe`, `/api/speak`) needs `AI_GATEWAY_API_KEY`;
-chat needs `BRAIN_URL` and `BRAIN_SECRET` pointing at a running brain (build it in `02-backend.md`).
+Open the page. You should see the orb assemble and spin, with the status pill reading
+`○ TAP TO TALK`. Tap it, allow the microphone, and watch it go `CONNECTING…` → `● MIC LIVE`. Say
+anything — the model hears you live and answers in voice, the orb stirring while it talks. Talk
+over it mid-sentence and it stops and listens. Ask it something only the brain knows and it makes
+the tool round-trip. Voice needs `AI_GATEWAY_API_KEY`; the tool round-trip needs `BRAIN_URL` and
+`BRAIN_SECRET` pointing at a running brain (build it in `02-backend.md`).
 
 > If you only want to confirm the orb renders (no mic/voice), open the page; the orb does not need a
 > backend to draw.
@@ -1345,8 +1123,10 @@ chat needs `BRAIN_URL` and `BRAIN_SECRET` pointing at a running brain (build it 
 Checklist before moving on:
 
 - [ ] Orb renders and animates.
-- [ ] Mic captures, `/api/transcribe` returns text (needs `AI_GATEWAY_API_KEY`).
-- [ ] A turn streams a reply from the brain, it is spoken, the orb pulses.
-- [ ] View source / network: **no key and no secret appear in the client bundle.**
+- [ ] Tap the pill → mic permission → `● MIC LIVE`; speaking gets a spoken reply and the orb stirs.
+- [ ] Talking over the model interrupts it (barge-in).
+- [ ] A question needing real data round-trips through `/api/realtime/ask` to the brain.
+- [ ] View source / network: **no key and no secret appear in the client bundle** — the browser
+      holds only the short-lived `vcst_` client token.
 
 Next: `02-backend.md`. Build the brain, then point the orb at it.
