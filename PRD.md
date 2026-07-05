@@ -6,23 +6,29 @@ owns the result; **the agent** is the coding agent building from this guide.
 
 ## Purpose
 
-Build a voice agent: a particle-orb web frontend the user talks to, backed by an agent brain on Vercel,
-where the user can say "hello" and hear a spoken reply. The orb runs on the user's machine; the brain is
-the deployed surface. The system is recreated from this guide in the user's own repo, on their own
-Vercel, with their own keys. No runtime is shipped; the guide ships contracts and verbatim-pinned code.
+Build a voice agent: a particle-orb web frontend the user talks to over a **realtime voice
+session** — they say "hello," it answers in voice with no pipeline latency, and talking over it
+interrupts it — backed by an agent brain on Vercel that the voice model consults for real data and
+actions. The orb runs on the user's machine; the brain is the deployed surface. The system is
+recreated from this guide in the user's own repo, on their own Vercel, with their own keys. No
+runtime is shipped; the guide ships contracts and verbatim-pinned code.
 
-The deliverable (the "foundation") is: **Frontend running locally, Backend deployed, voice round-trips.**
+The deliverable (the "foundation") is: **Frontend running locally, Backend deployed, realtime voice
+round-trips.**
 Context and Memory are specified here and built on request; they do not gate acceptance.
 
 ## Concepts (the architectural spine)
 
 Four layers, one pattern.
 
-- **Frontend** — the orb. A Next.js app: renders the orb, captures mic audio, plays TTS audio, holds no
-  secrets, contains no model logic. A layered UI (boot overlay, HUD, settings) sits on top —
-  presentation only, no secrets.
+- **Frontend** — the orb. A Next.js app: renders the orb and runs the realtime voice session
+  (`openai/gpt-realtime-2` over the AI Gateway; the browser holds only a short-lived client token).
+  Holds no secrets, contains no model logic. A layered UI (boot overlay, live-metrics HUD, settings)
+  sits around it — presentation only, no secrets.
 - **Backend** — the brain. An EVE agent exposing one HTTP door (`POST /v1/chat/completions`,
-  OpenAI-compatible). Holds the model key, runs the agent loop.
+  OpenAI-compatible). Holds the model key, runs the agent loop. The realtime model reaches it
+  through its one tool (`ask_jarvis_brain` → the orb's `/api/realtime/ask`) — "two brains, one
+  voice."
 - **Context** — per-conversation state: the agent's instructions + the live transcript, assembled per
   turn.
 - **Memory** — cross-conversation durable state (Cognee). Optional; behind two tools over a swappable
@@ -35,16 +41,17 @@ Four layers, one pattern.
 ```mermaid
 flowchart LR
   subgraph orb["orb/  (Next.js — runs locally)"]
-    UI["Orb UI + mic<br/>(browser, no secrets)"]
-    R1["/api/chat"]
-    R2["/api/speak"]
-    R3["/api/transcribe"]
+    UI["Orb UI + realtime voice session<br/>(browser: only the ephemeral vcst_ token)"]
+    R1["/api/realtime/setup (mint token)"]
+    R2["/api/realtime/ask (the tool's landing pad)"]
+    R3["/api/metrics (GET snapshot / POST refresh)"]
     R4["/api/events (SSE, optional)"]
     R5["/api/config"]
-    HUD["HUD + boot overlay<br/>(decorative; live via /api/events)"]
-    UI --> R1 & R2 & R3 & R5
-    HUD --> R4
-    R1 -. "telemetry" .-> R4
+    HUD["Live-metrics HUD + boot overlay"]
+    UI --> R1 & R5
+    UI -. "tool call ask_jarvis_brain" .-> R2
+    HUD --> R3 & R4
+    R2 -. "telemetry" .-> R4
   end
 
   subgraph brain["brain/  (EVE — the Vercel project)"]
@@ -53,20 +60,22 @@ flowchart LR
     SHIM --> LOOP
   end
 
-  GW["Vercel AI Gateway<br/>model · TTS · STT"]
+  GW["Vercel AI Gateway<br/>model · realtime voice"]
   MEM["Cognee (optional)"]
 
-  R1 -- "Bearer BRAIN_SECRET" --> SHIM
-  R2 -- "TTS" --> GW
-  R3 -- "STT" --> GW
+  UI == "WebSocket (audio both ways,<br/>vcst_ token)" ==> GW
+  R1 -- "getToken (AI_GATEWAY_API_KEY)" --> GW
+  R2 -- "Bearer BRAIN_SECRET" --> SHIM
+  R3 -- "vendor reads (on refresh only)" --> VEND["vendor APIs<br/>(installed as skills)"]
   LOOP -- "model" --> GW
   LOOP -. "remember / recall" .-> MEM
 ```
 
-The browser talks only to `orb/api/*`. Those routes hold `AI_GATEWAY_API_KEY` (voice) and
-`BRAIN_SECRET` (brain bearer). The brain holds `AI_GATEWAY_API_KEY` (model) and `BRAIN_SECRET`
-(validation). Full diagrams (request sequence, deploy topology) are in
-[`docs/architecture.md`](./docs/architecture.md).
+The browser talks to `orb/api/*` and — with only the short-lived `vcst_` client token the setup
+route minted — to the gateway's realtime WebSocket. The orb's routes hold `AI_GATEWAY_API_KEY`
+(token minting), `BRAIN_SECRET` (brain bearer), and any vendor keys (metrics). The brain holds
+`AI_GATEWAY_API_KEY` (model) and `BRAIN_SECRET` (validation). Full diagrams (request sequence,
+deploy topology) are in [`docs/architecture.md`](./docs/architecture.md).
 
 ## Folder structure
 
@@ -80,31 +89,31 @@ project (Root Directory = `brain`); the orb runs locally and talks to it.
   next.config.ts
   app/
     layout.tsx
-    page.tsx                  # renders <Orb/> <Hud/> <ChatBox/> <Settings/> <BootSequence/>
+    page.tsx                  # orb-stage + <Orb/> <Dashboard/> <RealtimeVoice/> <Settings/> <BootSequence/>
     globals.css
     api/
-      chat/route.ts           # BFF: proxy a turn to the brain, stream SSE
-      speak/route.ts          # BFF: text -> mp3 (TTS), server-side
-      transcribe/route.ts     # BFF: audio -> text (STT), server-side
-      events/route.ts         # BFF: SSE telemetry feed for the HUD (optional)
+      realtime/
+        setup/route.ts        # BFF: mint the ephemeral realtime token + tool definitions
+        ask/route.ts          # BFF: ask_jarvis_brain lands here -> brain -> {text}
+      metrics/route.ts        # BFF: GET last snapshot / POST refresh (reads vendors)
+      events/route.ts         # BFF: SSE feed of live agent activity (optional)
       config/route.ts         # BFF: read/write settings to .env.local
     components/
       Orb.tsx                 # three.js particle orb (uPulse driven by speech amplitude)
-      ChatBox.tsx             # mic + stop controls; runs a turn
-      voice.ts                # TTS speaker queue + mic recorder + amplitude sampling
+      RealtimeVoice.tsx       # realtime session + status pill + mic control
       voice-signal.ts         # shared 0..1 "is speaking" amplitude
-      Hud.tsx                 # HUD: reactor + d3 charts (decorative + optional live)
+      Dashboard.tsx           # live-metrics HUD: metric cards + store/social columns + feed
       BootSequence.tsx        # boot / loading overlay
       Settings.tsx            # runtime config panel (gear)
   lib/
-    domain/chat.ts            # ChatMessage + ChatDelta (BFF->browser contract)
-    domain/telemetry.ts       # HudEvent + HudState + reducer (HUD wire contract, optional)
-    cut-sentences.ts          # split streamed text into sentences for TTS
+    domain/chat.ts            # ChatMessage + ChatDelta (brain stream contract)
+    domain/metrics.ts         # MetricsSnapshot (per-vendor slices, DayPoint series)
+    domain/telemetry.ts       # HudEvent + HudState + reducer (feed wire contract, optional)
     openai-sse.ts             # parse OpenAI SSE -> content deltas
     ports/brain.ts            # Brain interface
     adapters/http-brain.ts    # the brain over the shim (always HTTP)
     adapters/brain-select.ts  # pick the brain from env (BRAIN_URL + BRAIN_MODE)
-    voice/tts.ts              # pick TTS model + voice by tier
+    metrics/                  # vendor read adapters (installed as skills)
 
   brain/                      # the brain (EVE) — the Vercel project, Root Directory = brain
     package.json              # type: module, imports "#*": "./agent/*", engines node >=24
@@ -262,9 +271,10 @@ contract:
 
 | Method + path | Request | Response | Calls |
 | ------------- | ------- | -------- | ----- |
-| `POST /api/chat` | `{ messages: ChatMessage[], stream: true }` | SSE of `ChatDelta` (`{type:'delta',text}` / `{type:'done'}` / `{type:'error',error}`) | the brain's `/v1/chat/completions` |
-| `POST /api/speak` | `{ text: string, voice?: string }` | `audio/mpeg` (mp3 bytes) | AI Gateway TTS |
-| `POST /api/transcribe` | raw audio bytes (e.g. `audio/webm`) | `{ text: string }` | AI Gateway STT |
+| `POST /api/realtime/setup` | — | the ephemeral realtime client token (`vcst_…`) + tool definitions | AI Gateway `getToken` (holds `AI_GATEWAY_API_KEY`) |
+| `POST /api/realtime/ask` | `{ message: string }` | `{ text: string }` (the brain's whole reply) | the brain's `/v1/chat/completions` (bearer) |
+| `GET /api/metrics` | — | the last persisted `MetricsSnapshot` (+ `syncedAt`) | local snapshot store |
+| `POST /api/metrics` | — | a fresh `MetricsSnapshot` | every configured vendor adapter (refresh only) |
 | `GET /api/events` | — (SSE) | `text/event-stream` of `HudEvent` frames (`status`/`tool`/`log`/`metric`) | in-process telemetry bus (optional) |
 | `GET /api/config` | — | config snapshot — no secrets (`*_set` flags + active enums) | reads env |
 | `POST /api/config` | settings subset (incl. `boot_on_load`) | updated snapshot | persists to `.env.local` |
@@ -276,12 +286,14 @@ The foundation is complete when all hold:
 1. The orb loads from localhost (`bun run dev`); the orb renders and animates.
 2. The deployed brain answers `POST /v1/chat/completions` for a valid bearer with a streamed
    reply terminated by `data: [DONE]`; an invalid bearer returns `401`.
-3. End to end: mic → `POST /api/transcribe` → `POST /api/chat` → brain → streamed reply → per-sentence
-   `POST /api/speak` → audio playback; the orb pulses with the audio amplitude.
+3. End to end: tap the status pill → `POST /api/realtime/setup` mints the token → the realtime
+   session connects (`CONNECTING…` → `● MIC LIVE`) → speaking gets a spoken reply and the orb
+   pulses → **talking over the model interrupts it** (barge-in) → a question needing real data
+   round-trips `ask_jarvis_brain` → `POST /api/realtime/ask` → the brain.
 4. `AGENT_MODEL` is a dotted gateway id; the brain's Vercel build succeeds.
 5. `BRAIN_SECRET` is identical on the orb and the brain; `BRAIN_URL` points at the deployed brain.
 6. No secret (`AI_GATEWAY_API_KEY`, `BRAIN_SECRET`, model key) appears in the client bundle or any
-   request the browser issues directly.
+   request the browser issues directly — the browser holds only the short-lived `vcst_` token.
 
 `guide/06-verify.md` is the executable checklist.
 
