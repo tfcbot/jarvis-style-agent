@@ -54,8 +54,8 @@ authenticated before continuing. Run the checks; only fix what fails.
 
 **The one key you need now: the Vercel AI Gateway credential**
 
-The AI Gateway runs **both** the model (brain) and the voice — speech in, speech out — keyless beyond
-this one credential. There are **no separate OpenAI/Anthropic keys** for the foundation.
+The AI Gateway runs **both** the model (brain) and the realtime voice — keyless beyond this one
+credential. There are **no separate OpenAI/Anthropic keys** for the foundation.
 
 - Ask the person to create one: Vercel dashboard → **AI Gateway** → **API key**.
 - They paste it to you as `AI_GATEWAY_API_KEY`. Hold it for Step 5 — **do not** echo it back or write
@@ -198,9 +198,8 @@ printf '%s' "anthropic/claude-haiku-4.5" | vercel env add AGENT_MODEL production
 Confirm `.env` and `.env.local` are gitignored (`git status` shows neither). Commit **only**
 `.env.example` stubs if you make them — never the real files.
 
-> **Optional, later (do not set now):** `COGNEE_API_KEY` (memory, `guide/guide/04-memory.md`) and
-> `ELEVENLABS_KEY` (premium voice). Both are opt-in add-ons the person brings in when they ask for that
-> capability.
+> **Optional, later (do not set now):** `COGNEE_API_KEY` (memory, `guide/guide/04-memory.md`) — an
+> opt-in add-on the person brings in when they ask for that capability.
 
 ---
 

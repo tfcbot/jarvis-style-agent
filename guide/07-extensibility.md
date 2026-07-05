@@ -24,23 +24,27 @@ In EVE, a tool is a file in `agent/tools/`. Define its description (the agent re
 to call it), its parameters (a zod schema), and what it does:
 
 ```ts
-// agent/tools/get-weather.ts
-import { defineTool } from "eve";
+// agent/tools/get_weather.ts
+import { defineTool } from "eve/tools";
 import { z } from "zod";
 
 export default defineTool({
   description: "Get the current weather for a city. Use when the person asks about weather.",
-  parameters: z.object({ city: z.string().describe("City name, e.g. 'Austin'.") }),
+  inputSchema: z.object({ city: z.string().describe("City name, e.g. 'Austin'.") }),
   async execute({ city }) {
     const res = await fetch(`https://api.example.com/weather?q=${encodeURIComponent(city)}`, {
       headers: { authorization: `Bearer ${process.env.WEATHER_API_KEY}` },
     });
-    if (!res.ok) return "I couldn't reach the weather service.";
+    if (!res.ok) return { error: "weather service unreachable" };
     const w = await res.json();
-    return `${city}: ${w.tempF}°F, ${w.summary}.`;
+    return { city, tempF: w.tempF, summary: w.summary };
   },
 });
 ```
+
+The tool name is the filename (`get_weather`). Guard configuration the same way the store tools do:
+if the env key is unset, return `{ configured: false, message: "…" }` instead of failing — the
+agent then tells the person what to connect rather than guessing.
 
 Then:
 
@@ -104,14 +108,22 @@ Trade-off: Hono is less to run, but you give up EVE's filesystem-first tools/ski
 EVE when the agent should *do* things; use Hono when it only needs to *talk*. Either way the orb is the
 same. That is the BFF contract earning its keep.
 
-## Swap the voice: gateway → ElevenLabs
+## Tune the voice: the realtime session config
 
-The default voice is the keyless Vercel AI Gateway (`openai/tts-1-hd`, voice `onyx`). For a premium
-voice, the `selectTts()` helper from `01-frontend.md` already supports **ElevenLabs**: set
-`VOICE_TIER=elevenlabs` and `ELEVENLABS_KEY` on the orb project, and optionally `ELEVENLABS_VOICE` (a
-voice id) and `ELEVENLABS_MODEL`. No code change; it is one env flip. The key stays server-side in the
-speak route (still the BFF). For a managed talking-head/avatar instead of an orb, point a Custom-LLM
-avatar platform at the brain's OpenAI-compatible door; the brain does not change.
+The voice is the realtime speech model (`openai/gpt-realtime-2` through the gateway), and its
+levers live in the session, not in a pipeline:
+
+- **`sessionConfig`** (in `RealtimeVoice.tsx`): the spoken persona (`instructions`), the voice id
+  (`voice: 'alloy'` — pick from the model's voice list), and turn-taking (`turnDetection:
+  { type: 'server-vad' }`). Keep the config a stable module-scope constant when you change it.
+- **`REALTIME_MODEL`** (orb env): swap the speech model as new realtime models ship — the token
+  route and client read the same id.
+- **The tool contract**: sharpen the `ask_jarvis_brain` description in `api/realtime/setup` as the
+  brain gains capabilities, so the voice model knows exactly when to reach for it and answers
+  everything else itself.
+
+For a managed talking-head/avatar instead of an orb, point a Custom-LLM avatar platform at the
+brain's OpenAI-compatible door; the brain does not change.
 
 ## Recommendations
 
