@@ -102,7 +102,7 @@ project (Root Directory = `brain`); the orb runs locally and talks to it.
       Orb.tsx                 # three.js particle orb (uPulse driven by speech amplitude)
       RealtimeVoice.tsx       # realtime session + status pill + mic control
       voice-signal.ts         # shared 0..1 "is speaking" amplitude
-      Dashboard.tsx           # live-metrics HUD: metric cards + store/social columns + feed
+      Dashboard.tsx           # live-metrics HUD: metric cards + store/social columns + gateway cost + feed
       BootSequence.tsx        # boot / loading overlay
       Settings.tsx            # runtime config panel (gear)
   lib/
@@ -274,7 +274,7 @@ contract:
 | `POST /api/realtime/setup` | — | the ephemeral realtime client token (`vcst_…`) + tool definitions | AI Gateway `getToken` (holds `AI_GATEWAY_API_KEY`) |
 | `POST /api/realtime/ask` | `{ message: string }` | `{ text: string }` (the brain's whole reply) | the brain's `/v1/chat/completions` (bearer) |
 | `GET /api/metrics` | — | the last persisted `MetricsSnapshot` (+ `syncedAt`) | local snapshot store |
-| `POST /api/metrics` | — | a fresh `MetricsSnapshot` | every configured vendor adapter (refresh only) |
+| `POST /api/metrics` | — | a fresh `MetricsSnapshot` | every configured vendor adapter + the built-in gateway credits read (`/v1/credits`) (refresh only) |
 | `GET /api/events` | — (SSE) | `text/event-stream` of `HudEvent` frames (`status`/`tool`/`log`/`metric`) | in-process telemetry bus (optional) |
 | `GET /api/config` | — | config snapshot — no secrets (`*_set` flags + active enums) | reads env |
 | `POST /api/config` | settings subset (incl. `boot_on_load`) | updated snapshot | persists to `.env.local` |

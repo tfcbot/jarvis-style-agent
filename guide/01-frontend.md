@@ -864,6 +864,10 @@ vendors, not ambient decoration. The layout:
   total), recent post impressions (bar strip + per-post rows), a reach panel (per-platform meters +
   totals for impressions/likes/comments/clicks), and an ads panel (spend, impressions, clicks,
   spend/day) when an ad account is connected.
+- A **gateway cost tile** (its own small panel): AI Gateway **credits remaining** as the headline
+  with **lifetime spend** beneath — the running cost of the brain and the realtime voice, which both
+  bill to the same Vercel team. This is *infrastructure* cost and is distinct from the ads panel's
+  **ad spend** above; do not conflate the two.
 - Small **data tags** orbiting the orb (e.g. `SESS 181`, `FLWR 392`, `CONV 1.1%`) tying the
   centerpiece to the data.
 
@@ -887,6 +891,17 @@ fill it (`lib/metrics/…` — a store platform, a social/ads platform) are inst
 per `07-extensibility.md`, with their keys in server env. Until one is installed, its panels read
 "not connected" and the rest of the HUD works.
 
+**The gateway slice is the one built-in.** Unlike the store/social adapters (installed as skills), a
+`gateway` slice reads AI Gateway credits with the `AI_GATEWAY_API_KEY` the BFF already holds — no
+extra key, no skill. Its adapter (`lib/metrics/gateway.ts`) makes **one** call, `GET
+https://ai-gateway.vercel.sh/v1/credits` with `Authorization: Bearer ${AI_GATEWAY_API_KEY}`, and
+maps the `{ balance, total_used }` response to the slice's `{ balance, totalUsed }` (USD); `configured`
+is `false` when the key is absent, `error` carries any fetch/auth failure. This single call covers
+**both** model and realtime-voice spend — both bill to the same Vercel account — and works on **every
+Vercel plan**. Deliberately kept minimal: per-day / per-model spend charts require the `/v1/report`
+reporting API (Pro/Enterprise only, billed per query), so they are a later, purely additive upgrade
+that drops into the same slice — the base HUD shows the two credit numbers only.
+
 Folder:
 
 ```
@@ -897,6 +912,7 @@ app/api/
 lib/
   domain/metrics.ts        # the snapshot contract (per-vendor slices, DayPoint series)
   metrics/                 # vendor read adapters (installed as skills; not part of the base)
+    gateway.ts             # built-in: AI Gateway credits via /v1/credits (uses AI_GATEWAY_API_KEY)
 ```
 
 > **Suggested prompt**
@@ -906,15 +922,18 @@ lib/
 > and one slice per vendor (store: sales/orders/AOV/sessions/conversion + salesByDay/ordersByDay/
 > sessionsByDay/conversionByDay + topProducts; social: accounts with per-platform followers +
 > followersTotal, recent posts with impressions/likes/comments/clicks, ads with spend/impressions/
-> clicks/spendByDay). Every slice has configured:boolean and error?:string; day series are
-> {date,value}[]. (2) app/api/metrics/route.ts: GET returns the persisted snapshot (.data/
-> metrics.json); POST re-reads all configured vendor adapters in lib/metrics/, persists, returns the
-> fresh snapshot. Never call vendors on GET or on a timer — refresh is user-triggered only. (3)
+> clicks/spendByDay; gateway: balance + totalUsed in USD). Every slice has configured:boolean and
+> error?:string; day series are {date,value}[]. (2) app/api/metrics/route.ts: GET returns the
+> persisted snapshot (.data/metrics.json); POST re-reads all configured vendor adapters in
+> lib/metrics/ — including the built-in gateway adapter (one GET https://ai-gateway.vercel.sh/v1/
+> credits with Authorization: Bearer AI_GATEWAY_API_KEY → {balance,total_used}) — persists, returns
+> the fresh snapshot. Never call vendors on GET or on a timer — refresh is user-triggered only. (3)
 > app/components/Dashboard.tsx: arrange panels AROUND a central orb stage — a top row of ~6 metric
 > cards (value, sparkline, ▲/▼/▸ trend of 2nd half vs 1st half of the window), a left store column
 > (sales/day area + orders/day bars, sessions/day line + conversion %/day, top products, activity
 > feed), a right social column (followers per platform, post impressions, reach meters, ads spend),
-> and 3-4 small data tags positioned around the orb. Charts with d3-shape/d3-scale: thin lines, dim
+> a gateway cost tile (credits remaining headline + lifetime spend sub-line — infra cost, not ad
+> spend), and 3-4 small data tags positioned around the orb. Charts with d3-shape/d3-scale: thin lines, dim
 > grids, tabular numerals, cyan-on-dark monospace panels with backdrop blur. A REFRESH button in the
 > top bar POSTs /api/metrics and shows "SYNCED <ago>". Slices with configured:false render a "not
 > connected" note — never fake numbers. Do NOT add any brain "mode" or mock badge.
